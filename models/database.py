@@ -1,5 +1,7 @@
 # backend/models/database.py
 
+import os
+import re
 import mysql.connector
 from mysql.connector import Error
 import bcrypt
@@ -13,12 +15,35 @@ class Database:
     
     def get_connection(self):
         try:
+            # First try DATABASE_URL (production)
+            database_url = os.getenv('DATABASE_URL')
+            
+            if database_url:
+                # Parse mysql://user:password@host:port/database
+                pattern = r'mysql://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)'
+                match = re.match(pattern, database_url)
+                
+                if match:
+                    print(f"🔗 Connecting to production database...")
+                    self.connection = mysql.connector.connect(
+                        host=match.group(3),
+                        user=match.group(1),
+                        password=match.group(2),
+                        database=match.group(5),
+                        port=int(match.group(4)),
+                        consume_results=True,
+                        autocommit=False
+                    )
+                    return self.connection
+            
+            # Fallback to individual variables (local development)
+            print(f"🔗 Connecting to local database...")
             self.connection = mysql.connector.connect(
                 host=Config.DB_HOST,
                 user=Config.DB_USER,
                 password=Config.DB_PASSWORD,
                 database=Config.DB_NAME,
-                consume_results=True,  # Prevents "Unread result found" errors
+                consume_results=True,
                 autocommit=False
             )
             return self.connection
@@ -333,8 +358,6 @@ class Database:
             for result in results:
                 if result.get('token'):
                     result['access_token'] = result['token'].decode('utf-8')
-                    # Remove binary token field to avoid issues in JSON
-                    # We keep it but frontend will use access_token
             
             return results
             
