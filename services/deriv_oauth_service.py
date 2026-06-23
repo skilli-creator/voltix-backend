@@ -16,31 +16,20 @@ class DerivOAuthService:
         self.auth_url = "https://auth.deriv.com/oauth2/auth"
         self.token_url = "https://auth.deriv.com/oauth2/token"
         self.api_base = "https://api.deriv.com"
-        
-        # Check if App ID is configured
-        if not self.client_id:
-            print("⚠️ WARNING: DERIV_APP_ID not set in environment")
     
     def is_configured(self):
-        """Check if OAuth is properly configured"""
         return bool(self.client_id)
     
     def generate_pkce_code_verifier(self):
-        """Generate a PKCE code verifier"""
         return base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b'=').decode('ascii')
     
     def generate_pkce_code_challenge(self, code_verifier):
-        """Generate a PKCE code challenge from the verifier"""
         code_challenge = hashlib.sha256(code_verifier.encode('ascii')).digest()
         return base64.urlsafe_b64encode(code_challenge).rstrip(b'=').decode('ascii')
     
     def get_authorization_url(self, state=None):
-        """
-        Generate the OAuth authorization URL with PKCE
-        Returns: (auth_url, code_verifier, state)
-        """
         if not self.is_configured():
-            raise Exception("DERIV_APP_ID not configured. Please add it to environment variables.")
+            raise Exception("DERIV_APP_ID not configured")
         
         code_verifier = self.generate_pkce_code_verifier()
         code_challenge = self.generate_pkce_code_challenge(code_verifier)
@@ -52,19 +41,17 @@ class DerivOAuthService:
             'response_type': 'code',
             'client_id': self.client_id,
             'redirect_uri': self.redirect_uri,
-            'scope': 'trading account_management',  # Correct scopes for Deriv
+            'scope': 'trading',  # Using 'trading' scope
             'code_challenge': code_challenge,
             'code_challenge_method': 'S256',
             'state': state
         }
         
         auth_url = f"{self.auth_url}?{urlencode(params)}"
+        print(f"🔍 Generated Auth URL: {auth_url}")
         return auth_url, code_verifier, state
     
     def exchange_code_for_tokens(self, code, code_verifier):
-        """
-        Exchange authorization code for access and refresh tokens
-        """
         if not self.is_configured():
             raise Exception("DERIV_APP_ID not configured")
         
@@ -90,7 +77,6 @@ class DerivOAuthService:
             raise Exception(f"Token exchange failed: {response.text}")
     
     def get_account_info(self, access_token):
-        """Get Deriv account information"""
         headers = {'Authorization': f'Bearer {access_token}'}
         response = requests.post(f"{self.api_base}/account_list", headers=headers)
         
@@ -112,15 +98,5 @@ class DerivOAuthService:
             raise Exception("No accounts found")
         else:
             raise Exception(f"Failed to get account info: {response.text}")
-    
-    def verify_token(self, access_token):
-        """Verify if the access token is valid"""
-        headers = {'Authorization': f'Bearer {access_token}'}
-        try:
-            response = requests.post(f"{self.api_base}/account_list", headers=headers)
-            return response.status_code == 200
-        except:
-            return False
 
-# Singleton instance
 deriv_oauth_service = DerivOAuthService()
