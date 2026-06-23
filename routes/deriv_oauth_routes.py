@@ -8,10 +8,18 @@ import secrets
 
 deriv_oauth_bp = Blueprint('deriv_oauth', __name__)
 
+# ============================================
+# OAUTH ENDPOINTS
+# ============================================
+
 @deriv_oauth_bp.route('/initiate', methods=['POST'])
 @jwt_required()
 def initiate_oauth():
+    """
+    Initiate OAuth flow - returns authorization URL
+    """
     try:
+        # Check if OAuth is configured
         if not deriv_oauth_service.is_configured():
             return jsonify({
                 'success': False,
@@ -19,8 +27,11 @@ def initiate_oauth():
             }), 400
         
         user_id = get_jwt_identity()
+        
+        # Generate PKCE verifier and state
         auth_url, code_verifier, state = deriv_oauth_service.get_authorization_url()
         
+        # Store verifier and state in session
         session['deriv_oauth_verifier'] = code_verifier
         session['deriv_oauth_state'] = state
         session['deriv_oauth_user_id'] = user_id
@@ -37,9 +48,14 @@ def initiate_oauth():
             'error': str(e)
         }), 500
 
+
 @deriv_oauth_bp.route('/callback', methods=['GET'])
 def oauth_callback():
+    """
+    Handle OAuth callback from Deriv
+    """
     try:
+        # Get code and state from query params
         code = request.args.get('code')
         state = request.args.get('state')
         error = request.args.get('error')
@@ -66,6 +82,7 @@ def oauth_callback():
             </html>
             """
         
+        # Get stored verifier and user_id from session
         stored_verifier = session.get('deriv_oauth_verifier')
         stored_state = session.get('deriv_oauth_state')
         user_id = session.get('deriv_oauth_user_id')
@@ -81,6 +98,7 @@ def oauth_callback():
             </html>
             """
         
+        # Verify state
         if state != stored_state:
             return """
             <html>
@@ -91,9 +109,13 @@ def oauth_callback():
             </html>
             """
         
+        # Exchange code for tokens
         token_data = deriv_oauth_service.exchange_code_for_tokens(code, stored_verifier)
+        
+        # Get account info
         account_info = deriv_oauth_service.get_account_info(token_data['access_token'])
         
+        # Save tokens to database
         db.save_deriv_token(
             user_id=user_id,
             access_token=token_data['access_token'],
@@ -104,10 +126,12 @@ def oauth_callback():
             balance=account_info['balance']
         )
         
+        # Clear session data
         session.pop('deriv_oauth_verifier', None)
         session.pop('deriv_oauth_state', None)
         session.pop('deriv_oauth_user_id', None)
         
+        # Return success page with redirect
         return f"""
         <html>
             <body>
@@ -136,9 +160,11 @@ def oauth_callback():
         </html>
         """
 
+
 @deriv_oauth_bp.route('/status', methods=['GET'])
 @jwt_required()
 def get_connection_status():
+    """Check if user has an active Deriv connection"""
     try:
         user_id = get_jwt_identity()
         token_data = db.get_deriv_token(user_id)
@@ -164,9 +190,11 @@ def get_connection_status():
             'error': str(e)
         }), 500
 
+
 @deriv_oauth_bp.route('/disconnect', methods=['POST'])
 @jwt_required()
 def disconnect():
+    """Disconnect Deriv account"""
     try:
         user_id = get_jwt_identity()
         db.deactivate_deriv_token(user_id)
