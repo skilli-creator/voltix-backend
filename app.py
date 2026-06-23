@@ -1,7 +1,7 @@
 # backend/app.py
 
-import time
 import os
+import time
 from flask import Flask, jsonify
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
@@ -9,6 +9,7 @@ from config import Config
 from routes.auth_routes import auth_bp
 from routes.deriv_routes import deriv_bp
 from routes.dbot_routes import bot_bp
+from routes.deriv_oauth_routes import deriv_oauth_bp  # ADD THIS
 from services.websocket_service import websocket_service
 
 # Create Flask app
@@ -17,6 +18,10 @@ app = Flask(__name__)
 # Load configuration
 app.config['SECRET_KEY'] = Config.SECRET_KEY
 app.config['JWT_SECRET_KEY'] = Config.JWT_SECRET_KEY
+app.config['SESSION_TYPE'] = 'filesystem'
+app.config['SESSION_COOKIE_SECURE'] = Config.is_production()
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['PERMANENT_SESSION_LIFETIME'] = 600
 
 # Initialize extensions
 CORS(app)
@@ -25,6 +30,7 @@ jwt = JWTManager(app)
 # Register blueprints
 app.register_blueprint(auth_bp, url_prefix='/api/auth')
 app.register_blueprint(deriv_bp, url_prefix='/api/deriv')
+app.register_blueprint(deriv_oauth_bp, url_prefix='/api/deriv/oauth')  # ADD THIS
 app.register_blueprint(bot_bp, url_prefix='/api/bot')
 
 # Initialize SocketIO
@@ -41,7 +47,7 @@ def home():
         'message': 'Voltix API Running 🚀',
         'status': 'online',
         'websocket': 'Enabled',
-        'environment': os.environ.get('ENVIRONMENT', 'production')
+        'environment': os.environ.get('ENVIRONMENT', 'development')
     })
 
 @app.route('/health')
@@ -56,10 +62,10 @@ def health():
 # Run the app
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 3000))
-    print("Starting Voltix Traders Backend...")
-    print(" WebSocket enabled on /socket.io/")
-    print(f" Server running on http://localhost:{port}")
-    print(" Waiting for connections...")
+    print("🚀 Starting Voltix Traders Backend...")
+    print("🌐 WebSocket enabled on /socket.io/")
+    print(f"📍 Server running on http://localhost:{port}")
+    print("📡 Waiting for connections...")
     
     socketio.run(
         app,

@@ -11,10 +11,7 @@ class Config:
     JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY')
     
     # Database
-    # Priority 1: Use DATABASE_URL (for production - Render/Clever Cloud)
     DATABASE_URL = os.getenv('DATABASE_URL')
-    
-    # Priority 2: Individual variables (for local development)
     DB_HOST = os.getenv('DB_HOST', 'localhost')
     DB_USER = os.getenv('DB_USER', 'root')
     DB_PASSWORD = os.getenv('DB_PASSWORD', '')
@@ -30,7 +27,13 @@ class Config:
     # Environment
     ENVIRONMENT = os.getenv('ENVIRONMENT', 'development')
     
-    # Helper method to check if running in production
+    # ============================================
+    # DERIV OAUTH CONFIGURATION
+    # ============================================
+    DERIV_APP_ID = os.getenv('DERIV_APP_ID', '')
+    DERIV_REDIRECT_URI = os.getenv('DERIV_REDIRECT_URI', 'http://localhost:3000/api/deriv/oauth/callback')
+    FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+    
     @staticmethod
     def is_production():
         return os.getenv('ENVIRONMENT') == 'production'

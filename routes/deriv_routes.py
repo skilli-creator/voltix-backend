@@ -2,6 +2,7 @@
 
 import time
 from flask import Blueprint, jsonify, request
+from flask_jwt_extended import jwt_required, get_jwt_identity
 from services.deriv_service import deriv_service
 from services.websocket_service import websocket_service, socketio
 
@@ -20,51 +21,57 @@ def get_markets():
     })
 
 @deriv_bp.route('/market-data', methods=['GET'])
+@jwt_required()
 def get_all_market_data():
-    """Get data for all markets"""
-    return jsonify({
-        'success': True,
-        'data': deriv_service.get_all_market_data()
-    })
-
-@deriv_bp.route('/market-data/<symbol>', methods=['GET'])
-def get_market_data(symbol):
-    """Get data for a specific market"""
-    data = deriv_service.get_market_data(symbol)
+    """Get data for all markets (requires authentication)"""
+    user_id = get_jwt_identity()
+    data = deriv_service.get_all_market_data()
+    
     if not data:
         return jsonify({
             'success': False,
-            'error': f'Market {symbol} not found'
+            'error': 'No market data available. Please connect your Deriv account.'
         }), 404
+    
+    return jsonify({
+        'success': True,
+        'data': data
+    })
+
+@deriv_bp.route('/market-data/<symbol>', methods=['GET'])
+@jwt_required()
+def get_market_data(symbol):
+    """Get data for a specific market (requires authentication)"""
+    user_id = get_jwt_identity()
+    data = deriv_service.get_market_data(symbol)
+    
+    if not data:
+        return jsonify({
+            'success': False,
+            'error': f'Market {symbol} not found or not connected'
+        }), 404
+    
     return jsonify({
         'success': True,
         'data': data
     })
 
 @deriv_bp.route('/market-data/<symbol>/history', methods=['GET'])
+@jwt_required()
 def get_market_history(symbol):
     """Get historical ticks for a market"""
     limit = request.args.get('limit', 150, type=int)
     ticks = deriv_service.get_market_history(symbol, limit)
+    
     if ticks is None:
         return jsonify({
             'success': False,
             'error': f'Market {symbol} not found'
         }), 404
+    
     return jsonify({
         'success': True,
         'data': ticks
-    })
-
-@deriv_bp.route('/update', methods=['POST'])
-def force_update():
-    """Force update all markets (for testing)"""
-    data = deriv_service.update_all_markets()
-    websocket_service.broadcast_to_all('price_update', {'data': data})
-    return jsonify({
-        'success': True,
-        'data': data,
-        'message': 'All markets updated'
     })
 
 # ============================================
@@ -85,9 +92,17 @@ def register_socket_handlers():
         websocket_service.register_client(client_id)
         print(f'✅ Client connected: {client_id}')
         
-        # Send initial data
-        initial_data = deriv_service.get_all_market_data()
-        socketio.emit('initial_data', {'data': initial_data}, room=client_id)
+        # Send available markets list
+        socketio.emit('markets_list', {
+            'data': deriv_service.get_markets_list()
+        }, room=client_id)
+        
+        # Send any existing market data
+        all_data = deriv_service.get_all_market_data()
+        if all_data:
+            socketio.emit('initial_data', {
+                'data': all_data
+            }, room=client_id)
     
     @socketio.on('disconnect')
     def handle_disconnect():
@@ -102,10 +117,14 @@ def register_socket_handlers():
         if symbol:
             websocket_service.subscribe(client_id, symbol)
             print(f'📡 Client {client_id} subscribed to {symbol}')
-            socketio.emit('subscribed', {
-                'symbol': symbol,
-                'message': f'Subscribed to {symbol}'
-            }, room=client_id)
+            
+            # Send current data immediately if available
+            market_data = deriv_service.get_market_data(symbol)
+            if market_data:
+                socketio.emit('market_update', {
+                    'symbol': symbol,
+                    'data': market_data
+                }, room=client_id)
     
     @socketio.on('unsubscribe')
     def handle_unsubscribe(data):
@@ -114,10 +133,6 @@ def register_socket_handlers():
         if symbol:
             websocket_service.unsubscribe(client_id, symbol)
             print(f'📡 Client {client_id} unsubscribed from {symbol}')
-            socketio.emit('unsubscribed', {
-                'symbol': symbol,
-                'message': f'Unsubscribed from {symbol}'
-            }, room=client_id)
     
     @socketio.on('ping')
     def handle_ping():
@@ -128,11 +143,18 @@ def register_socket_handlers():
     
     @socketio.on('get_market_data')
     def handle_get_market_data(data):
+        """Client requests market data"""
         client_id = request.sid
         symbol = data.get('symbol')
         if symbol:
             market_data = deriv_service.get_market_data(symbol)
-            socketio.emit('market_update', {
-                'symbol': symbol,
-                'data': market_data
-            }, room=client_id)
+            if market_data:
+                socketio.emit('market_update', {
+                    'symbol': symbol,
+                    'data': market_data
+                }, room=client_id)
+            else:
+                socketio.emit('market_error', {
+                    'symbol': symbol,
+                    'message': f'No data available for {symbol}'
+                }, room=client_id)
