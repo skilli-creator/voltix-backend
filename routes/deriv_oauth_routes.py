@@ -71,6 +71,13 @@ def oauth_callback():
     Handle OAuth callback from Deriv
     """
     try:
+        print("🔥 CALLBACK HIT")
+
+        code = request.args.get('code')
+        state = request.args.get('state')
+
+        print("CODE:", code)
+        print("STATE:", state)
         # Get code and state from query params
         code = request.args.get('code')
         state = request.args.get('state')
@@ -100,6 +107,7 @@ def oauth_callback():
         
         # Get stored verifier and user_id from session
         oauth_data = db.get_oauth_state(state)
+        print("➡️ OAUTH DATA:", oauth_data)
 
         if not oauth_data:
             return "Invalid or expired OAuth state", 400
@@ -120,7 +128,6 @@ def oauth_callback():
         # Verify state
         # Verify state exists (already done via DB lookup)
         if not state:
-            return "Missing state", 400
             return """
             <html>
                 <body>
@@ -132,9 +139,11 @@ def oauth_callback():
         
         # Exchange code for tokens
         token_data = deriv_oauth_service.exchange_code_for_tokens(code, stored_verifier)
+        print("➡️ TOKEN:", token_data)
         
         # Get account info
         account_info = deriv_oauth_service.get_account_info(token_data['access_token'])
+        print("➡️ ACCOUNT:", account_info)
         
         # Save tokens to database
         # Save tokens to database
