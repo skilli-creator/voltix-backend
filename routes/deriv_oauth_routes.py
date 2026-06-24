@@ -17,9 +17,11 @@ import base64
 @deriv_oauth_bp.route('/initiate', methods=['POST'])
 def initiate_deriv_oauth():
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         user_id = data.get('user_id')
-
+        
+        if not user_id:
+            user_id = request.args.get('user_id')
         if not user_id:
             return jsonify({'error': 'Missing user_id'}), 400
 
