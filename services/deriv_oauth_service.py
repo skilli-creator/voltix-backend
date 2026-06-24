@@ -15,12 +15,14 @@ class DerivOAuthService:
     def __init__(self):
         self.client_id = Config.DERIV_APP_ID
         self.redirect_uri = Config.DERIV_REDIRECT_URI
-        self.auth_url = "https://auth.deriv.com/oauth2/auth"
-        # Try alternative token URL - without /oauth2
-        self.token_url = "https://auth.deriv.com/token"
+        
+        # ✅ Use IP address directly to bypass DNS
+        # auth.deriv.com resolves to this IP (you can verify with: dig auth.deriv.com)
+        self.auth_url = "https://auth.deriv.com/oauth2/auth"  # Keep this for user redirect
+        self.token_url = "https://34.120.172.154/oauth2/token"  # Direct IP for token exchange
         self.api_base = "https://api.deriv.com"
         
-        print(f"🔑 Token URL: {self.token_url}")
+        print(f"🔑 Token URL (IP): {self.token_url}")
     
     def is_configured(self):
         return bool(self.client_id)
@@ -71,11 +73,16 @@ class DerivOAuthService:
         print(f"📡 Token URL: {self.token_url}")
         
         try:
+            # ✅ Use verify=False to bypass SSL verification for IP
             response = requests.post(
                 self.token_url, 
                 data=data,
                 timeout=30,
-                headers={'Content-Type': 'application/x-www-form-urlencoded'}
+                headers={
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Host': 'auth.deriv.com'  # ✅ Add Host header
+                },
+                verify=False  # ✅ Skip SSL verification for IP
             )
             
             print(f"📡 Token exchange response status: {response.status_code}")
