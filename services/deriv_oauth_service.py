@@ -3,7 +3,6 @@
 import hashlib
 import base64
 import secrets
-import socket
 import httpx
 from urllib.parse import urlencode
 from config import Config
@@ -15,10 +14,12 @@ class DerivOAuthService:
         self.client_id = Config.DERIV_APP_ID
         self.redirect_uri = Config.DERIV_REDIRECT_URI
         self.auth_url = "https://auth.deriv.com/oauth2/auth"
-        self.token_url = "https://auth.deriv.com/oauth2/token"
+        
+        # ✅ Try the alternative token endpoint
+        self.token_url = "https://oauth.deriv.com/oauth2/token"
         self.api_base = "https://api.deriv.com"
         
-        print(f"🔑 Using httpx for HTTP requests")
+        print(f"🔑 Token URL: {self.token_url}")
     
     def is_configured(self):
         return bool(self.client_id)
@@ -65,10 +66,10 @@ class DerivOAuthService:
             'code_verifier': code_verifier
         }
         
-        print(f"🔄 Exchanging code for tokens using httpx...")
+        print(f"🔄 Exchanging code for tokens...")
+        print(f"📡 Token URL: {self.token_url}")
         
         try:
-            # Try with httpx (better SSL handling)
             with httpx.Client(timeout=30.0, verify=True) as client:
                 response = client.post(
                     self.token_url,
@@ -90,51 +91,12 @@ class DerivOAuthService:
                     raise Exception(f"Token exchange failed: {response.text}")
                 
         except Exception as e:
-            print(f"❌ Error with domain: {e}")
-            print(f"🔄 Trying with IP fallback using httpx...")
-            return self._exchange_code_with_ip_fallback(code, code_verifier)
-    
-    def _exchange_code_with_ip_fallback(self, code, code_verifier):
-        """Fallback to IP address with httpx"""
-        data = {
-            'grant_type': 'authorization_code',
-            'client_id': self.client_id,
-            'code': code,
-            'redirect_uri': self.redirect_uri,
-            'code_verifier': code_verifier
-        }
-        
-        try:
-            # Create a client with SSL verification disabled for IP
-            with httpx.Client(timeout=30.0, verify=False) as client:
-                response = client.post(
-                    "https://34.120.172.154/oauth2/token",
-                    data=data,
-                    headers={
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                        'Host': 'auth.deriv.com'
-                    }
-                )
-                
-                if response.status_code == 200:
-                    token_data = response.json()
-                    print(f"✅ Fallback token exchange successful")
-                    return {
-                        'access_token': token_data.get('access_token'),
-                        'refresh_token': token_data.get('refresh_token'),
-                        'token_type': token_data.get('token_type', 'Bearer'),
-                        'expires_in': token_data.get('expires_in', 3600)
-                    }
-                else:
-                    raise Exception(f"Fallback token exchange failed: {response.text}")
-                
-        except Exception as e:
-            print(f"❌ Fallback error: {e}")
-            raise Exception(f"Both primary and fallback failed: {str(e)}")
+            print(f"❌ Error: {e}")
+            raise
     
     def get_account_info(self, access_token):
         headers = {'Authorization': f'Bearer {access_token}'}
-        print(f"🔄 Getting account info using httpx...")
+        print(f"🔄 Getting account info...")
         
         try:
             with httpx.Client(timeout=30.0, verify=True) as client:
