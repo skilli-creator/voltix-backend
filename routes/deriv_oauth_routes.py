@@ -15,53 +15,33 @@ import base64
 
 
 @deriv_oauth_bp.route('/initiate', methods=['POST'])
-def initiate_deriv_oauth():
+def initiate_oauth():
     try:
-        data = request.get_json(silent=True) or {}
-        user_id = data.get('user_id')
-        
-        if not user_id:
-            user_id = request.args.get('user_id')
+        # ✅ DO NOT USE request.get_json() directly
+        if request.is_json:
+            data = request.get_json(silent=True) or {}
+        else:
+            data = {}
+
+        # ✅ support both JSON and query
+        user_id = data.get('user_id') or request.args.get('user_id')
+
         if not user_id:
             return jsonify({'error': 'Missing user_id'}), 400
 
-        # ✅ Generate PKCE values
-        code_verifier = secrets.token_urlsafe(64)
+        # 🔑 generate state (temporary)
+        state = str(user_id)
 
-        code_challenge = base64.urlsafe_b64encode(
-            hashlib.sha256(code_verifier.encode()).digest()
-        ).decode().rstrip('=')
-
-        # ✅ Generate state
-        state = secrets.token_urlsafe(32)
-
-        # ✅ SAVE TO DATABASE (THIS IS THE FIX)
-        db.save_oauth_state(
-            user_id=user_id,
-            state=state,
-            code_verifier=code_verifier
-        )
-
-        # ✅ Build Deriv OAuth URL
-        deriv_auth_url = (
-            f"https://oauth.deriv.com/oauth2/authorize?"
-            f"app_id=33DwVpDgwErShzzDqnJ24"
-            f"&redirect_uri=https://voltix-backend-vh8c.onrender.com/api/deriv/oauth/callback"
-            f"&response_type=code"
-            f"&scope=read"
-            f"&state={state}"
-            f"&code_challenge={code_challenge}"
-            f"&code_challenge_method=S256"
-        )
+        auth_url = f"https://oauth.deriv.com/oauth2/authorize?app_id={DERIV_APP_ID}&state={state}"
 
         return jsonify({
-            'auth_url': deriv_auth_url
+            'success': True,
+            'auth_url': auth_url
         })
 
     except Exception as e:
-        print(f"OAuth initiate error: {e}")
+        print("OAuth initiate error:", str(e))
         return jsonify({'error': 'Failed to initiate OAuth'}), 500
-
 
 @deriv_oauth_bp.route('/callback', methods=['GET'])
 def oauth_callback():
