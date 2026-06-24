@@ -5,7 +5,7 @@ import secrets
 import hashlib
 import base64
 from config import Config   # make sure this exists
-import db
+from models import database as db
 from services.deriv_oauth_service import deriv_oauth_service
 
 deriv_oauth_bp = Blueprint('deriv_oauth', __name__)
