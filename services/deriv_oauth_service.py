@@ -4,10 +4,12 @@ import hashlib
 import base64
 import secrets
 import requests
-import socket
-import time
+import urllib3
 from urllib.parse import urlencode
 from config import Config
+
+# Disable SSL warnings (only for development)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 class DerivOAuthService:
     """Service for handling Deriv OAuth 2.0 with PKCE"""
@@ -16,13 +18,12 @@ class DerivOAuthService:
         self.client_id = Config.DERIV_APP_ID
         self.redirect_uri = Config.DERIV_REDIRECT_URI
         
-        # ✅ Use IP address directly to bypass DNS
-        # auth.deriv.com resolves to this IP (you can verify with: dig auth.deriv.com)
-        self.auth_url = "https://auth.deriv.com/oauth2/auth"  # Keep this for user redirect
-        self.token_url = "https://34.120.172.154/oauth2/token"  # Direct IP for token exchange
+        # ✅ Use the correct OAuth endpoint
+        self.auth_url = "https://auth.deriv.com/oauth2/auth"
+        self.token_url = "https://auth.deriv.com/oauth2/token"
         self.api_base = "https://api.deriv.com"
         
-        print(f"🔑 Token URL (IP): {self.token_url}")
+        print(f"🔑 Token URL: {self.token_url}")
     
     def is_configured(self):
         return bool(self.client_id)
@@ -73,16 +74,14 @@ class DerivOAuthService:
         print(f"📡 Token URL: {self.token_url}")
         
         try:
-            # ✅ Use verify=False to bypass SSL verification for IP
+            # Try with the domain name
             response = requests.post(
                 self.token_url, 
                 data=data,
                 timeout=30,
                 headers={
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'Host': 'auth.deriv.com'  # ✅ Add Host header
-                },
-                verify=False  # ✅ Skip SSL verification for IP
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                }
             )
             
             print(f"📡 Token exchange response status: {response.status_code}")
@@ -100,9 +99,57 @@ class DerivOAuthService:
                 print(f"❌ Token exchange failed: {response.text}")
                 raise Exception(f"Token exchange failed: {response.text}")
                 
+        except requests.exceptions.ConnectionError as e:
+            print(f"❌ Connection error with domain, trying alternative...")
+            # Fallback to the IP address
+            return self._exchange_code_with_ip_fallback(code, code_verifier)
         except Exception as e:
             print(f"❌ Error: {e}")
             raise
+    
+    def _exchange_code_with_ip_fallback(self, code, code_verifier):
+        """Fallback to IP address if domain resolution fails"""
+        data = {
+            'grant_type': 'authorization_code',
+            'client_id': self.client_id,
+            'code': code,
+            'redirect_uri': self.redirect_uri,
+            'code_verifier': code_verifier
+        }
+        
+        # Try IP address with Host header
+        ip_url = "https://34.120.172.154/oauth2/token"
+        print(f"📡 Fallback Token URL (IP): {ip_url}")
+        
+        try:
+            response = requests.post(
+                ip_url,
+                data=data,
+                timeout=30,
+                headers={
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Host': 'auth.deriv.com'
+                },
+                verify=False  # Skip SSL verification for IP
+            )
+            
+            print(f"📡 Fallback response status: {response.status_code}")
+            
+            if response.status_code == 200:
+                token_data = response.json()
+                print(f"✅ Fallback token exchange successful")
+                return {
+                    'access_token': token_data.get('access_token'),
+                    'refresh_token': token_data.get('refresh_token'),
+                    'token_type': token_data.get('token_type', 'Bearer'),
+                    'expires_in': token_data.get('expires_in', 3600)
+                }
+            else:
+                raise Exception(f"Fallback token exchange failed: {response.text}")
+                
+        except Exception as e:
+            print(f"❌ Fallback error: {e}")
+            raise Exception(f"Both primary and fallback token exchange failed: {str(e)}")
     
     def get_account_info(self, access_token):
         headers = {'Authorization': f'Bearer {access_token}'}
@@ -136,7 +183,7 @@ class DerivOAuthService:
                 raise Exception(f"Failed to get account info: {response.text}")
                 
         except Exception as e:
-            print(f"❌ Error: {e}")
+            print(f"❌ Error getting account info: {e}")
             raise
 
 deriv_oauth_service = DerivOAuthService()
