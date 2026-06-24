@@ -7,46 +7,58 @@ from models.database import db
 import secrets
 
 deriv_oauth_bp = Blueprint('deriv_oauth', __name__)
+from flask import request, jsonify
+import secrets
+import hashlib
+import base64
 
-# ============================================
-# OAUTH ENDPOINTS
-# ============================================
+
 
 @deriv_oauth_bp.route('/initiate', methods=['POST'])
-@jwt_required()
-def initiate_oauth():
-    """
-    Initiate OAuth flow - returns authorization URL
-    """
+def initiate_deriv_oauth():
     try:
-        # Check if OAuth is configured
-        if not deriv_oauth_service.is_configured():
-            return jsonify({
-                'success': False,
-                'error': 'OAuth not configured. Please add DERIV_APP_ID to environment variables.'
-            }), 400
-        
-        user_id = get_jwt_identity()
-        
-        # Generate PKCE verifier and state
-        auth_url, code_verifier, state = deriv_oauth_service.get_authorization_url()
-        
-        # Store verifier and state in session
-        session['deriv_oauth_verifier'] = code_verifier
-        session['deriv_oauth_state'] = state
-        session['deriv_oauth_user_id'] = user_id
-        
+        data = request.get_json()
+        user_id = data.get('user_id')
+
+        if not user_id:
+            return jsonify({'error': 'Missing user_id'}), 400
+
+        # ✅ Generate PKCE values
+        code_verifier = secrets.token_urlsafe(64)
+
+        code_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode()).digest()
+        ).decode().rstrip('=')
+
+        # ✅ Generate state
+        state = secrets.token_urlsafe(32)
+
+        # ✅ SAVE TO DATABASE (THIS IS THE FIX)
+        db.save_oauth_state(
+            user_id=user_id,
+            state=state,
+            code_verifier=code_verifier
+        )
+
+        # ✅ Build Deriv OAuth URL
+        deriv_auth_url = (
+            f"https://oauth.deriv.com/oauth2/authorize?"
+            f"app_id=YOUR_APP_ID"
+            f"&redirect_uri=YOUR_REDIRECT_URI"
+            f"&response_type=code"
+            f"&scope=read"
+            f"&state={state}"
+            f"&code_challenge={code_challenge}"
+            f"&code_challenge_method=S256"
+        )
+
         return jsonify({
-            'success': True,
-            'auth_url': auth_url,
-            'state': state
+            'auth_url': deriv_auth_url
         })
-        
+
     except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        print(f"OAuth initiate error: {e}")
+        return jsonify({'error': 'Failed to initiate OAuth'}), 500
 
 
 @deriv_oauth_bp.route('/callback', methods=['GET'])
