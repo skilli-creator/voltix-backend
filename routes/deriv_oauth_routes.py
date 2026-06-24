@@ -43,8 +43,8 @@ def initiate_deriv_oauth():
         # ✅ Build Deriv OAuth URL
         deriv_auth_url = (
             f"https://oauth.deriv.com/oauth2/authorize?"
-            f"app_id=YOUR_APP_ID"
-            f"&redirect_uri=YOUR_REDIRECT_URI"
+            f"app_id=33DwVpDgwErShzzDqnJ24"
+            f"&redirect_uri=https://voltix-backend-vh8c.onrender.com/api/deriv/oauth/callback"
             f"&response_type=code"
             f"&scope=read"
             f"&state={state}"
