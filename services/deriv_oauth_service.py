@@ -4,6 +4,8 @@ import hashlib
 import base64
 import secrets
 import requests
+import socket
+import time
 from urllib.parse import urlencode
 from config import Config
 
@@ -16,6 +18,21 @@ class DerivOAuthService:
         self.auth_url = "https://auth.deriv.com/oauth2/auth"
         self.token_url = "https://auth.deriv.com/oauth2/token"
         self.api_base = "https://api.deriv.com"
+        
+        # Pre-resolve DNS to avoid timeout
+        self._resolve_dns()
+    
+    def _resolve_dns(self):
+        """Pre-resolve DNS to avoid timeout issues on Render"""
+        try:
+            # Set a timeout for DNS resolution
+            socket.setdefaulttimeout(10)
+            ip = socket.gethostbyname('auth.deriv.com')
+            print(f"✅ DNS resolved: auth.deriv.com -> {ip}")
+            return True
+        except Exception as e:
+            print(f"⚠️ DNS lookup warning: {e}")
+            return False
     
     def is_configured(self):
         return bool(self.client_id)
@@ -54,6 +71,9 @@ class DerivOAuthService:
         if not self.is_configured():
             raise Exception("DERIV_APP_ID not configured")
         
+        # Set a timeout for the request
+        socket.setdefaulttimeout(30)
+        
         data = {
             'grant_type': 'authorization_code',
             'client_id': self.client_id,
@@ -62,40 +82,77 @@ class DerivOAuthService:
             'code_verifier': code_verifier
         }
         
-        response = requests.post(self.token_url, data=data)
-        
-        if response.status_code == 200:
-            token_data = response.json()
-            return {
-                'access_token': token_data.get('access_token'),
-                'refresh_token': token_data.get('refresh_token'),
-                'token_type': token_data.get('token_type', 'Bearer'),
-                'expires_in': token_data.get('expires_in', 3600)
-            }
-        else:
-            raise Exception(f"Token exchange failed: {response.text}")
+        try:
+            print(f"🔄 Exchanging code for tokens...")
+            response = requests.post(
+                self.token_url, 
+                data=data,
+                timeout=30,
+                headers={'Content-Type': 'application/x-www-form-urlencoded'}
+            )
+            
+            print(f"📡 Token exchange response status: {response.status_code}")
+            
+            if response.status_code == 200:
+                token_data = response.json()
+                print(f"✅ Token exchange successful")
+                return {
+                    'access_token': token_data.get('access_token'),
+                    'refresh_token': token_data.get('refresh_token'),
+                    'token_type': token_data.get('token_type', 'Bearer'),
+                    'expires_in': token_data.get('expires_in', 3600)
+                }
+            else:
+                print(f"❌ Token exchange failed: {response.text}")
+                raise Exception(f"Token exchange failed: {response.text}")
+                
+        except requests.exceptions.Timeout:
+            print(f"❌ Token exchange timeout")
+            raise Exception("Token exchange timed out. Please try again.")
+        except requests.exceptions.ConnectionError as e:
+            print(f"❌ Connection error: {e}")
+            raise Exception(f"Connection error: {str(e)}")
     
     def get_account_info(self, access_token):
-        headers = {'Authorization': f'Bearer {access_token}'}
-        response = requests.post(f"{self.api_base}/account_list", headers=headers)
+        socket.setdefaulttimeout(30)
         
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('error'):
-                raise Exception(f"API error: {data.get('error')}")
+        headers = {'Authorization': f'Bearer {access_token}'}
+        print(f"🔄 Getting account info...")
+        
+        try:
+            response = requests.post(
+                f"{self.api_base}/account_list", 
+                headers=headers,
+                timeout=30
+            )
             
-            accounts = data.get('account_list', [])
-            if accounts:
-                account = accounts[0]
-                return {
-                    'account_id': account.get('account_id'),
-                    'account_type': account.get('account_type', 'Demo'),
-                    'email': account.get('email'),
-                    'currency': account.get('currency', 'USD'),
-                    'balance': account.get('balance', 0)
-                }
-            raise Exception("No accounts found")
-        else:
-            raise Exception(f"Failed to get account info: {response.text}")
+            print(f"📡 Account info response status: {response.status_code}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('error'):
+                    raise Exception(f"API error: {data.get('error')}")
+                
+                accounts = data.get('account_list', [])
+                if accounts:
+                    account = accounts[0]
+                    print(f"✅ Account info retrieved: {account.get('account_id')}")
+                    return {
+                        'account_id': account.get('account_id'),
+                        'account_type': account.get('account_type', 'Demo'),
+                        'email': account.get('email'),
+                        'currency': account.get('currency', 'USD'),
+                        'balance': account.get('balance', 0)
+                    }
+                raise Exception("No accounts found")
+            else:
+                raise Exception(f"Failed to get account info: {response.text}")
+                
+        except requests.exceptions.Timeout:
+            print(f"❌ Account info timeout")
+            raise Exception("Account info request timed out")
+        except requests.exceptions.ConnectionError as e:
+            print(f"❌ Connection error: {e}")
+            raise Exception(f"Connection error: {str(e)}")
 
 deriv_oauth_service = DerivOAuthService()
