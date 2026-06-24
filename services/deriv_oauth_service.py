@@ -16,23 +16,11 @@ class DerivOAuthService:
         self.client_id = Config.DERIV_APP_ID
         self.redirect_uri = Config.DERIV_REDIRECT_URI
         self.auth_url = "https://auth.deriv.com/oauth2/auth"
-        self.token_url = "https://auth.deriv.com/oauth2/token"
+        # Try alternative token URL - without /oauth2
+        self.token_url = "https://auth.deriv.com/token"
         self.api_base = "https://api.deriv.com"
         
-        # Pre-resolve DNS to avoid timeout
-        self._resolve_dns()
-    
-    def _resolve_dns(self):
-        """Pre-resolve DNS to avoid timeout issues on Render"""
-        try:
-            # Set a timeout for DNS resolution
-            socket.setdefaulttimeout(10)
-            ip = socket.gethostbyname('auth.deriv.com')
-            print(f"✅ DNS resolved: auth.deriv.com -> {ip}")
-            return True
-        except Exception as e:
-            print(f"⚠️ DNS lookup warning: {e}")
-            return False
+        print(f"🔑 Token URL: {self.token_url}")
     
     def is_configured(self):
         return bool(self.client_id)
@@ -71,9 +59,6 @@ class DerivOAuthService:
         if not self.is_configured():
             raise Exception("DERIV_APP_ID not configured")
         
-        # Set a timeout for the request
-        socket.setdefaulttimeout(30)
-        
         data = {
             'grant_type': 'authorization_code',
             'client_id': self.client_id,
@@ -82,8 +67,10 @@ class DerivOAuthService:
             'code_verifier': code_verifier
         }
         
+        print(f"🔄 Exchanging code for tokens...")
+        print(f"📡 Token URL: {self.token_url}")
+        
         try:
-            print(f"🔄 Exchanging code for tokens...")
             response = requests.post(
                 self.token_url, 
                 data=data,
@@ -106,16 +93,11 @@ class DerivOAuthService:
                 print(f"❌ Token exchange failed: {response.text}")
                 raise Exception(f"Token exchange failed: {response.text}")
                 
-        except requests.exceptions.Timeout:
-            print(f"❌ Token exchange timeout")
-            raise Exception("Token exchange timed out. Please try again.")
-        except requests.exceptions.ConnectionError as e:
-            print(f"❌ Connection error: {e}")
-            raise Exception(f"Connection error: {str(e)}")
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            raise
     
     def get_account_info(self, access_token):
-        socket.setdefaulttimeout(30)
-        
         headers = {'Authorization': f'Bearer {access_token}'}
         print(f"🔄 Getting account info...")
         
@@ -125,8 +107,6 @@ class DerivOAuthService:
                 headers=headers,
                 timeout=30
             )
-            
-            print(f"📡 Account info response status: {response.status_code}")
             
             if response.status_code == 200:
                 data = response.json()
@@ -148,11 +128,8 @@ class DerivOAuthService:
             else:
                 raise Exception(f"Failed to get account info: {response.text}")
                 
-        except requests.exceptions.Timeout:
-            print(f"❌ Account info timeout")
-            raise Exception("Account info request timed out")
-        except requests.exceptions.ConnectionError as e:
-            print(f"❌ Connection error: {e}")
-            raise Exception(f"Connection error: {str(e)}")
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            raise
 
 deriv_oauth_service = DerivOAuthService()
