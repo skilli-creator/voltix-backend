@@ -30,9 +30,9 @@ class Config:
     # ============================================
     # DERIV OAUTH CONFIGURATION
     # ============================================
-    DERIV_APP_ID = os.getenv('DERIV_APP_ID', '')
-    DERIV_REDIRECT_URI = os.getenv('DERIV_REDIRECT_URI', 'http://localhost:3000/api/deriv/oauth/callback')
-    FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+    DERIV_APP_ID = os.getenv('33DwVpDgwErShzzDqnJ24', '')
+    DERIV_REDIRECT_URI = os.getenv('DERIV_REDIRECT_URI', 'https://voltix-traders.vercel.app/api/deriv/oauth/callback')
+    FRONTEND_URL = os.getenv('FRONTEND_URL', 'https://voltix-traders.vercel.app/derivhome')
     
     @staticmethod
     def is_production():
