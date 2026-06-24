@@ -47,6 +47,8 @@ def initiate_oauth():
             f"&code_challenge={code_challenge}"
             f"&code_challenge_method=S256"
             f"&state={state}"
+            
+
             encoded_redirect_uri = urllib.parse.quote(Config.DERIV_REDIRECT_URI, safe='')
 
             auth_url = (
@@ -59,7 +61,6 @@ def initiate_oauth():
                 f"&state={state}"
             )
         )
-        print("AUTH URL:", auth_url)
 
         return jsonify({
             'success': True,
