@@ -1,5 +1,7 @@
 # backend/services/email_service.py
+
 import smtplib
+import socket
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from config import Config
@@ -10,6 +12,9 @@ class EmailService:
     def send_verification_email(to_email, code):
         """Send email verification code to new user"""
         try:
+            # Set timeout
+            socket.setdefaulttimeout(30)
+            
             msg = MIMEMultipart()
             msg['From'] = Config.EMAIL_USER
             msg['To'] = to_email
@@ -286,27 +291,20 @@ class EmailService:
             </head>
             <body>
             <div class="container">
-                <!-- header -->
                 <div class="header">
                 <div class="brand-icon">⚡</div>
                 <div class="brand-text">Volt<span>ix</span> traders</div>
                 <span class="badge">AI trading</span>
                 </div>
-
-                <!-- main message -->
                 <h3>🔐 Verify your email</h3>
                 <div class="sub-head">
                 Welcome to Voltix — one last step to activate your trading dashboard.
                 </div>
-
-                <!-- verification code -->
                 <div class="code-box">
                 <div class="code-label">verification code</div>
                 <div class="code"><strong>{code}</strong></div>
                 <div class="expiry">⏳ This code expires in <strong>10 minutes</strong> · for your security</div>
                 </div>
-
-                <!-- trading insights / pro content -->
                 <div class="trading-highlight">
                 <p style="font-weight: 500; color: #eef3ff;">📈 <strong>Start trading with institutional-grade tools</strong></p>
                 <p>Voltix delivers real-time market data, AI-driven signals, and low-latency execution. Access 120+ crypto pairs, indices, and commodities — all from a single dashboard.</p>
@@ -317,8 +315,6 @@ class EmailService:
                     <span class="feature-item">Portfolio analytics</span>
                 </div>
                 </div>
-
-                <!-- support + whatsapp -->
                 <div class="support-box">
                 <div class="support-text">
                     <strong>📞 Need help?</strong> Our support team is available 24/7. <br>
@@ -334,14 +330,10 @@ class EmailService:
                     Chat with support
                 </a>
                 </div>
-                <!-- extra contact hint -->
                 <p style="color: #5b6b91; font-size: 13px; margin-top: 12px; text-align: right; letter-spacing: 0.2px;">
                 WhatsApp <strong style="color: #9aaacf;">0704 182 603</strong> · response within 2 min
                 </p>
-
                 <hr class="divider">
-
-                <!-- footer -->
                 <div class="footer">
                 <span>© 2026 Voltix — AI Trading Platform</span>
                 <span>
@@ -358,21 +350,27 @@ class EmailService:
             
             msg.attach(MIMEText(html, 'html'))
             
-            with smtplib.SMTP(Config.EMAIL_HOST, Config.EMAIL_PORT) as server:
+            with smtplib.SMTP(Config.EMAIL_HOST, Config.EMAIL_PORT, timeout=30) as server:
                 server.starttls()
                 server.login(Config.EMAIL_USER, Config.EMAIL_PASS)
                 server.send_message(msg)
             
             print(f"✅ Verification email sent to {to_email}")
             return True
+        except socket.timeout:
+            print(f"❌ Email timeout: Connection to {Config.EMAIL_HOST} timed out")
+            return False
         except Exception as e:
-            print(f"Verification email error: {e}")
+            print(f"❌ Verification email error: {e}")
             return False
 
     @staticmethod
     def send_password_reset_email(to_email, code):
         """Send password reset code to user"""
         try:
+            # Set timeout
+            socket.setdefaulttimeout(30)
+            
             msg = MIMEMultipart()
             msg['From'] = Config.EMAIL_USER
             msg['To'] = to_email
@@ -568,24 +566,19 @@ class EmailService:
                         <div class="brand-text">Volt<span>ix</span></div>
                         <span class="badge">AI trading</span>
                     </div>
-
                     <h3>🔑 Password Reset Request</h3>
                     <div class="sub-head">
                         You requested to reset your password. Use the code below to proceed.
                     </div>
-
                     <div class="code-box">
                         <div class="code-label">reset code</div>
                         <div class="code"><strong>{code}</strong></div>
                         <div class="expiry">⏳ This code expires in <strong>10 minutes</strong></div>
                     </div>
-
                     <div class="warning-box">
                         If you did not request this, please ignore this email or contact support immediately.
                     </div>
-
                     <hr class="divider">
-
                     <div class="footer">
                         <span>© 2026 Voltix — AI Trading Platform</span>
                         <span>
@@ -602,71 +595,26 @@ class EmailService:
             
             msg.attach(MIMEText(html, 'html'))
             
-            with smtplib.SMTP(Config.EMAIL_HOST, Config.EMAIL_PORT) as server:
-                server.starttls()
-                server.login(Config.EMAIL_USER, Config.EMAIL_PASS)
-                server.send_message(msg)
-            
-            print(f"✅ Verification email sent to {to_email}")
-            return True
-        except Exception as e:
-            print(f"Verification email error: {e}")
-            return False
-    
-    @staticmethod
-    def send_password_reset_email(to_email, code):
-        """Send password reset code to user"""
-        try:
-            msg = MIMEMultipart()
-            msg['From'] = Config.EMAIL_USER
-            msg['To'] = to_email
-            msg['Subject'] = 'Voltix - Password Reset Code'
-            
-            html = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta charset="UTF-8">
-                <style>
-                    body {{ font-family: Arial, sans-serif; background-color: #0a1428; padding: 20px; }}
-                    .container {{ max-width: 600px; margin: 0 auto; background: #0f1730; border-radius: 20px; padding: 40px; }}
-                    h2 {{ color: #22c55e; }}
-                    .code {{ font-size: 36px; letter-spacing: 8px; background: #1e293b; padding: 20px; border-radius: 12px; text-align: center; color: #22c55e; }}
-                    .warning {{ color: #f59e0b; font-size: 12px; margin-top: 20px; }}
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <h2>⚡ Voltix</h2>
-                    <h3>Password Reset Request</h3>
-                    <p>You requested to reset your password. Use the code below to proceed:</p>
-                    <div class="code"><strong>{code}</strong></div>
-                    <p>This code expires in <strong>10 minutes</strong>.</p>
-                    <p class="warning">⚠️ If you did not request this, please ignore this email or contact support.</p>
-                    <hr>
-                    <p style="color: #666; font-size: 12px;">© 2026 Voltix — AI Trading Platform</p>
-                </div>
-            </body>
-            </html>
-            """
-            
-            msg.attach(MIMEText(html, 'html'))
-            
-            with smtplib.SMTP(Config.EMAIL_HOST, Config.EMAIL_PORT) as server:
+            with smtplib.SMTP(Config.EMAIL_HOST, Config.EMAIL_PORT, timeout=30) as server:
                 server.starttls()
                 server.login(Config.EMAIL_USER, Config.EMAIL_PASS)
                 server.send_message(msg)
             
             print(f"✅ Password reset email sent to {to_email}")
             return True
+        except socket.timeout:
+            print(f"❌ Email timeout: Connection to {Config.EMAIL_HOST} timed out")
+            return False
         except Exception as e:
-            print(f"Password reset email error: {e}")
+            print(f"❌ Password reset email error: {e}")
             return False
     
     @staticmethod
     def send_admin_notification(subject, body):
         """Send notification to admin email"""
         try:
+            socket.setdefaulttimeout(30)
+            
             msg = MIMEMultipart()
             msg['From'] = Config.EMAIL_USER
             msg['To'] = Config.ADMIN_EMAIL
@@ -684,13 +632,16 @@ class EmailService:
             
             msg.attach(MIMEText(html, 'html'))
             
-            with smtplib.SMTP(Config.EMAIL_HOST, Config.EMAIL_PORT) as server:
+            with smtplib.SMTP(Config.EMAIL_HOST, Config.EMAIL_PORT, timeout=30) as server:
                 server.starttls()
                 server.login(Config.EMAIL_USER, Config.EMAIL_PASS)
                 server.send_message(msg)
             
             print(f"✅ Admin notification sent to {Config.ADMIN_EMAIL}")
             return True
+        except socket.timeout:
+            print(f"❌ Email timeout: Connection to {Config.EMAIL_HOST} timed out")
+            return False
         except Exception as e:
-            print(f"Admin notification error: {e}")
+            print(f"❌ Admin notification error: {e}")
             return False

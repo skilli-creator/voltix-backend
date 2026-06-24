@@ -132,21 +132,7 @@ def oauth_callback():
         session.pop('deriv_oauth_user_id', None)
         
         # Return success page with redirect
-        return f"""
-        <html>
-            <body>
-                <h2>✅ Connection Successful!</h2>
-                <p>Your Deriv account has been connected.</p>
-                <p>Redirecting to dashboard...</p>
-                <script>
-                    setTimeout(function() {{
-                        window.opener.location.href = '/derivdash?connected=true&account_id={account_info["account_id"]}';
-                        window.close();
-                    }}, 2000);
-                </script>
-            </body>
-        </html>
-        """
+        return redirect(f"https://voltix-traders.vercel.app/derivdash?connected=true&account_id={account_info['account_id']}")
         
     except Exception as e:
         return f"""
