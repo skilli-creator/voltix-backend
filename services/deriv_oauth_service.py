@@ -41,7 +41,7 @@ class DerivOAuthService:
             'response_type': 'code',
             'client_id': self.client_id,
             'redirect_uri': self.redirect_uri,
-            'scope': 'trading',  # Using 'trading' scope
+            'scope': 'read',  # Using 'trading' scope
             'code_challenge': code_challenge,
             'code_challenge_method': 'S256',
             'state': state
