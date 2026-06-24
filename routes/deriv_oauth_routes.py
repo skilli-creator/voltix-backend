@@ -55,6 +55,7 @@ def initiate_oauth():
             f"&code_challenge_method=S256"
             f"&state={state}"
         )
+        print("AUTH URL:", auth_url)
 
         return jsonify({
             'success': True,
