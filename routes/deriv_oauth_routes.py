@@ -8,6 +8,8 @@ from config import Config   # make sure this exists
 from models.database import db
 from services.deriv_oauth_service import deriv_oauth_service
 import urllib.parse
+from dotenv import load_dotenv
+load_dotenv()
 
 deriv_oauth_bp = Blueprint('deriv_oauth', __name__)
 
