@@ -25,34 +25,26 @@ def initiate_oauth():
         if not user_id:
             return jsonify({'error': 'Unauthorized'}), 401
 
-        # Generate secure state
         state = secrets.token_urlsafe(32)
-
-        # Generate PKCE verifier
         code_verifier = secrets.token_urlsafe(64)
-
-        # Generate code challenge
         code_challenge = base64.urlsafe_b64encode(
             hashlib.sha256(code_verifier.encode()).digest()
         ).decode().rstrip('=')
 
-        # Store in database
         db.save_oauth_state(
             state=state,
             code_verifier=code_verifier,
             user_id=user_id
         )
 
-        # Encode redirect URI
         encoded_redirect_uri = urllib.parse.quote(Config.DERIV_REDIRECT_URI, safe='')
 
-        # ✅ CORRECT Deriv OAuth URL
+        # ✅ CORRECT - No scope parameter
         auth_url = (
             f"https://auth.deriv.com/oauth2/auth"
             f"?response_type=code"
             f"&client_id={Config.DERIV_APP_ID}"
             f"&redirect_uri={encoded_redirect_uri}"
-            f"&scope=read"
             f"&code_challenge={code_challenge}"
             f"&code_challenge_method=S256"
             f"&state={state}"
@@ -78,7 +70,6 @@ def oauth_callback():
     try:
         print("🔥 CALLBACK HIT")
 
-        # Get code and state from query params
         code = request.args.get('code')
         state = request.args.get('state')
         error = request.args.get('error')
@@ -109,9 +100,7 @@ def oauth_callback():
             </html>
             """
 
-        # Get stored verifier and user_id from database
         oauth_data = db.get_oauth_state(state)
-        print("➡️ OAUTH DATA:", oauth_data)
 
         if not oauth_data:
             return """
@@ -138,15 +127,12 @@ def oauth_callback():
             </html>
             """
 
-        # Exchange code for tokens
         token_data = deriv_oauth_service.exchange_code_for_tokens(code, stored_verifier)
         print("➡️ TOKEN DATA:", token_data)
 
-        # Get account info
         account_info = deriv_oauth_service.get_account_info(token_data['access_token'])
         print("➡️ ACCOUNT INFO:", account_info)
 
-        # Save tokens to database
         db.save_deriv_token(
             user_id=user_id,
             access_token=token_data['access_token'],
@@ -157,10 +143,8 @@ def oauth_callback():
             balance=account_info['balance']
         )
 
-        # Delete state from database
         db.delete_oauth_state(state)
 
-        # Redirect to frontend dashboard
         return redirect(
             f"{Config.FRONTEND_URL}/derivdash?connected=true&account_id={account_info['account_id']}"
         )
