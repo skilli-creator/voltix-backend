@@ -40,26 +40,20 @@ def initiate_oauth():
         )
 
         # ✅ Build OAuth URL
+    
+
+        # ✅ Encode redirect URI FIRST
+        encoded_redirect_uri = urllib.parse.quote(Config.DERIV_REDIRECT_URI, safe='')
+
+        # ✅ Build OAuth URL
         auth_url = (
             f"https://oauth.deriv.com/oauth2/authorize"
             f"?app_id={Config.DERIV_APP_ID}"
+            f"&redirect_uri={encoded_redirect_uri}"
             f"&response_type=code"
             f"&code_challenge={code_challenge}"
             f"&code_challenge_method=S256"
             f"&state={state}"
-            
-
-            encoded_redirect_uri = urllib.parse.quote(Config.DERIV_REDIRECT_URI, safe='')
-
-            auth_url = (
-                f"https://oauth.deriv.com/oauth2/authorize"
-                f"?app_id={Config.DERIV_APP_ID}"
-                f"&redirect_uri={encoded_redirect_uri}"
-                f"&response_type=code"
-                f"&code_challenge={code_challenge}"
-                f"&code_challenge_method=S256"
-                f"&state={state}"
-            )
         )
 
         return jsonify({
