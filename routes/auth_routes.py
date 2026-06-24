@@ -173,7 +173,7 @@ def login():
     
     db.update_last_login(user['id'])
     
-    token = create_access_token(identity=user['id'])
+    token = create_access_token(identity=str(user['id']))
 
     return jsonify({
         'message': 'Login successful',
