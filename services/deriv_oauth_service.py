@@ -3,14 +3,10 @@
 import hashlib
 import base64
 import secrets
-import urllib3
-import ssl
 import socket
+import httpx
 from urllib.parse import urlencode
 from config import Config
-
-# Disable SSL warnings
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 class DerivOAuthService:
     """Service for handling Deriv OAuth 2.0 with PKCE"""
@@ -22,19 +18,7 @@ class DerivOAuthService:
         self.token_url = "https://auth.deriv.com/oauth2/token"
         self.api_base = "https://api.deriv.com"
         
-        # Pre-resolve DNS
-        self._resolve_dns()
-    
-    def _resolve_dns(self):
-        """Pre-resolve DNS to avoid timeout"""
-        try:
-            socket.setdefaulttimeout(10)
-            ip = socket.gethostbyname('auth.deriv.com')
-            print(f"✅ DNS resolved: auth.deriv.com -> {ip}")
-            return True
-        except Exception as e:
-            print(f"⚠️ DNS lookup warning: {e}")
-            return False
+        print(f"🔑 Using httpx for HTTP requests")
     
     def is_configured(self):
         return bool(self.client_id)
@@ -81,42 +65,37 @@ class DerivOAuthService:
             'code_verifier': code_verifier
         }
         
-        print(f"🔄 Exchanging code for tokens...")
+        print(f"🔄 Exchanging code for tokens using httpx...")
         
-        # Try with requests and proper SSL handling
         try:
-            import requests
-            response = requests.post(
-                self.token_url,
-                data=data,
-                timeout=30,
-                headers={'Content-Type': 'application/x-www-form-urlencoded'},
-                verify=True
-            )
-            
-            if response.status_code == 200:
-                token_data = response.json()
-                print(f"✅ Token exchange successful")
-                return {
-                    'access_token': token_data.get('access_token'),
-                    'refresh_token': token_data.get('refresh_token'),
-                    'token_type': token_data.get('token_type', 'Bearer'),
-                    'expires_in': token_data.get('expires_in', 3600)
-                }
-            else:
-                print(f"❌ Token exchange failed: {response.text}")
-                raise Exception(f"Token exchange failed: {response.text}")
+            # Try with httpx (better SSL handling)
+            with httpx.Client(timeout=30.0, verify=True) as client:
+                response = client.post(
+                    self.token_url,
+                    data=data,
+                    headers={'Content-Type': 'application/x-www-form-urlencoded'}
+                )
+                
+                if response.status_code == 200:
+                    token_data = response.json()
+                    print(f"✅ Token exchange successful")
+                    return {
+                        'access_token': token_data.get('access_token'),
+                        'refresh_token': token_data.get('refresh_token'),
+                        'token_type': token_data.get('token_type', 'Bearer'),
+                        'expires_in': token_data.get('expires_in', 3600)
+                    }
+                else:
+                    print(f"❌ Token exchange failed: {response.text}")
+                    raise Exception(f"Token exchange failed: {response.text}")
                 
         except Exception as e:
             print(f"❌ Error with domain: {e}")
-            print(f"🔄 Trying with IP fallback...")
+            print(f"🔄 Trying with IP fallback using httpx...")
             return self._exchange_code_with_ip_fallback(code, code_verifier)
     
     def _exchange_code_with_ip_fallback(self, code, code_verifier):
-        """Fallback to IP address with SSL context"""
-        import requests
-        import ssl
-        
+        """Fallback to IP address with httpx"""
         data = {
             'grant_type': 'authorization_code',
             'client_id': self.client_id,
@@ -125,70 +104,64 @@ class DerivOAuthService:
             'code_verifier': code_verifier
         }
         
-        # Create SSL context that doesn't verify hostname
-        ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
-        
         try:
-            response = requests.post(
-                "https://34.120.172.154/oauth2/token",
-                data=data,
-                timeout=30,
-                headers={
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'Host': 'auth.deriv.com'
-                },
-                verify=False  # Skip SSL verification
-            )
-            
-            if response.status_code == 200:
-                token_data = response.json()
-                print(f"✅ Fallback token exchange successful")
-                return {
-                    'access_token': token_data.get('access_token'),
-                    'refresh_token': token_data.get('refresh_token'),
-                    'token_type': token_data.get('token_type', 'Bearer'),
-                    'expires_in': token_data.get('expires_in', 3600)
-                }
-            else:
-                raise Exception(f"Fallback token exchange failed: {response.text}")
+            # Create a client with SSL verification disabled for IP
+            with httpx.Client(timeout=30.0, verify=False) as client:
+                response = client.post(
+                    "https://34.120.172.154/oauth2/token",
+                    data=data,
+                    headers={
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'Host': 'auth.deriv.com'
+                    }
+                )
+                
+                if response.status_code == 200:
+                    token_data = response.json()
+                    print(f"✅ Fallback token exchange successful")
+                    return {
+                        'access_token': token_data.get('access_token'),
+                        'refresh_token': token_data.get('refresh_token'),
+                        'token_type': token_data.get('token_type', 'Bearer'),
+                        'expires_in': token_data.get('expires_in', 3600)
+                    }
+                else:
+                    raise Exception(f"Fallback token exchange failed: {response.text}")
                 
         except Exception as e:
             print(f"❌ Fallback error: {e}")
             raise Exception(f"Both primary and fallback failed: {str(e)}")
     
     def get_account_info(self, access_token):
-        import requests
         headers = {'Authorization': f'Bearer {access_token}'}
-        print(f"🔄 Getting account info...")
+        print(f"🔄 Getting account info using httpx...")
         
         try:
-            response = requests.post(
-                f"{self.api_base}/account_list", 
-                headers=headers,
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('error'):
-                    raise Exception(f"API error: {data.get('error')}")
+            with httpx.Client(timeout=30.0, verify=True) as client:
+                response = client.post(
+                    f"{self.api_base}/account_list",
+                    headers=headers
+                )
                 
-                accounts = data.get('account_list', [])
-                if accounts:
-                    account = accounts[0]
-                    print(f"✅ Account info retrieved: {account.get('account_id')}")
-                    return {
-                        'account_id': account.get('account_id'),
-                        'account_type': account.get('account_type', 'Demo'),
-                        'email': account.get('email'),
-                        'currency': account.get('currency', 'USD'),
-                        'balance': account.get('balance', 0)
-                    }
-                raise Exception("No accounts found")
-            else:
-                raise Exception(f"Failed to get account info: {response.text}")
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get('error'):
+                        raise Exception(f"API error: {data.get('error')}")
+                    
+                    accounts = data.get('account_list', [])
+                    if accounts:
+                        account = accounts[0]
+                        print(f"✅ Account info retrieved: {account.get('account_id')}")
+                        return {
+                            'account_id': account.get('account_id'),
+                            'account_type': account.get('account_type', 'Demo'),
+                            'email': account.get('email'),
+                            'currency': account.get('currency', 'USD'),
+                            'balance': account.get('balance', 0)
+                        }
+                    raise Exception("No accounts found")
+                else:
+                    raise Exception(f"Failed to get account info: {response.text}")
                 
         except Exception as e:
             print(f"❌ Error getting account info: {e}")
