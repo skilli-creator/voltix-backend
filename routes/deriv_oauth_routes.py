@@ -1,38 +1,48 @@
 # backend/routes/deriv_oauth_routes.py
 
-from flask import Blueprint, request, jsonify, redirect, session
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from services.deriv_oauth_service import deriv_oauth_service
-from models.database import db
-import secrets
-
-deriv_oauth_bp = Blueprint('deriv_oauth', __name__)
-from flask import request, jsonify
+from flask import session
 import secrets
 import hashlib
 import base64
-
-
+from config import Config   # make sure this exists
 
 @deriv_oauth_bp.route('/initiate', methods=['POST'])
+@jwt_required()
 def initiate_oauth():
     try:
-        # ✅ DO NOT USE request.get_json() directly
-        if request.is_json:
-            data = request.get_json(silent=True) or {}
-        else:
-            data = {}
-
-        # ✅ support both JSON and query
-        user_id = data.get('user_id') or request.args.get('user_id')
+        # ✅ Get user from JWT (NOT frontend)
+        user_id = get_jwt_identity()
 
         if not user_id:
-            return jsonify({'error': 'Missing user_id'}), 400
+            return jsonify({'error': 'Unauthorized'}), 401
 
-        # 🔑 generate state (temporary)
-        state = str(user_id)
+        # ✅ Generate secure state
+        state = secrets.token_urlsafe(32)
 
-        auth_url = f"https://oauth.deriv.com/oauth2/authorize?app_id={DERIV_APP_ID}&state={state}"
+        # ✅ Generate PKCE verifier
+        code_verifier = secrets.token_urlsafe(64)
+
+        # ✅ Generate code challenge
+        code_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode()).digest()
+        ).decode().rstrip('=')
+
+        # ✅ Store in session (USED in callback)
+        session['deriv_oauth_state'] = state
+        session['deriv_oauth_verifier'] = code_verifier
+        session['deriv_oauth_user_id'] = user_id
+
+        # ✅ Build OAuth URL
+        auth_url = (
+            f"https://oauth.deriv.com/oauth2/authorize"
+            f"?app_id={Config.DERIV_APP_ID}"
+            f"&redirect_uri={Config.DERIV_REDIRECT_URI}"
+            f"&response_type=code"
+            f"&code_challenge={code_challenge}"
+            f"&code_challenge_method=S256"
+            f"&state={state}"
+        )
 
         return jsonify({
             'success': True,
