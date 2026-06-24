@@ -1,11 +1,12 @@
 # backend/routes/deriv_oauth_routes.py
 from flask import Blueprint, request, jsonify, redirect
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from flask import session
 import secrets
 import hashlib
 import base64
 from config import Config   # make sure this exists
+import db
+from services.deriv_oauth_service import deriv_oauth_service
 
 deriv_oauth_bp = Blueprint('deriv_oauth', __name__)
 
@@ -31,9 +32,11 @@ def initiate_oauth():
         ).decode().rstrip('=')
 
         # ✅ Store in session (USED in callback)
-        session['deriv_oauth_state'] = state
-        session['deriv_oauth_verifier'] = code_verifier
-        session['deriv_oauth_user_id'] = user_id
+        db.save_oauth_state(
+            state=state,
+            code_verifier=code_verifier,
+            user_id=user_id
+        )
 
         # ✅ Build OAuth URL
         auth_url = (
@@ -89,10 +92,13 @@ def oauth_callback():
             """
         
         # Get stored verifier and user_id from session
-        stored_verifier = session.get('deriv_oauth_verifier')
-        stored_state = session.get('deriv_oauth_state')
-        user_id = session.get('deriv_oauth_user_id')
-        
+        oauth_data = db.get_oauth_state(state)
+
+        if not oauth_data:
+            return "Invalid or expired OAuth state", 400
+
+        stored_verifier = oauth_data['code_verifier']
+        user_id = oauth_data['user_id']
         if not stored_verifier or not user_id:
             return """
             <html>
@@ -105,7 +111,9 @@ def oauth_callback():
             """
         
         # Verify state
-        if state != stored_state:
+        # Verify state exists (already done via DB lookup)
+        if not state:
+            return "Missing state", 400
             return """
             <html>
                 <body>
@@ -122,6 +130,7 @@ def oauth_callback():
         account_info = deriv_oauth_service.get_account_info(token_data['access_token'])
         
         # Save tokens to database
+        # Save tokens to database
         db.save_deriv_token(
             user_id=user_id,
             access_token=token_data['access_token'],
@@ -131,15 +140,14 @@ def oauth_callback():
             currency=account_info['currency'],
             balance=account_info['balance']
         )
-        
-        # Clear session data
-        session.pop('deriv_oauth_verifier', None)
-        session.pop('deriv_oauth_state', None)
-        session.pop('deriv_oauth_user_id', None)
-        
-        # Return success page with redirect
-        return redirect(f"https://voltix-traders.vercel.app/derivdash?connected=true&account_id={account_info['account_id']}")
-        
+
+        # ✅ STEP 3 — DELETE STATE FROM DB
+        db.delete_oauth_state(state)
+
+        # Redirect to frontend dashboard
+        return redirect(
+            f"https://voltix-traders.vercel.app/derivdash?connected=true&account_id={account_info['account_id']}"
+        )
     except Exception as e:
         return f"""
         <html>
