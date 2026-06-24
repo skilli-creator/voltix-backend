@@ -7,6 +7,7 @@ import base64
 from config import Config   # make sure this exists
 from models.database import db
 from services.deriv_oauth_service import deriv_oauth_service
+import urllib.parse
 
 deriv_oauth_bp = Blueprint('deriv_oauth', __name__)
 
@@ -42,12 +43,23 @@ def initiate_oauth():
         auth_url = (
             f"https://oauth.deriv.com/oauth2/authorize"
             f"?app_id={Config.DERIV_APP_ID}"
-            f"&redirect_uri={Config.DERIV_REDIRECT_URI}"
             f"&response_type=code"
             f"&code_challenge={code_challenge}"
             f"&code_challenge_method=S256"
             f"&state={state}"
+            encoded_redirect_uri = urllib.parse.quote(Config.DERIV_REDIRECT_URI, safe='')
+
+            auth_url = (
+                f"https://oauth.deriv.com/oauth2/authorize"
+                f"?app_id={Config.DERIV_APP_ID}"
+                f"&redirect_uri={encoded_redirect_uri}"
+                f"&response_type=code"
+                f"&code_challenge={code_challenge}"
+                f"&code_challenge_method=S256"
+                f"&state={state}"
+            )
         )
+        print("AUTH URL:", auth_url)
 
         return jsonify({
             'success': True,
