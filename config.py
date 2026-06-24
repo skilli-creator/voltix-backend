@@ -42,7 +42,7 @@ class Config:
     # DERIV OAUTH CONFIGURATION
     # ============================================
     DERIV_APP_ID = os.getenv('DERIV_APP_ID', '')
-    DERIV_REDIRECT_URI = os.getenv('DERIV_REDIRECT_URI', '')
+    DERIV_REDIRECT_URI = os.getenv('DERIV_REDIRECT_URI', 'https://voltix-backend-vh8c.onrender.com/api/deriv/oauth/callback')
     FRONTEND_URL = os.getenv('FRONTEND_URL', '')
 
     # ============================================
