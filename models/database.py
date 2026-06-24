@@ -477,6 +477,7 @@ class Database:
         finally:
             cursor.close()
             conn.close()
+
     
     def refresh_deriv_token(self, user_id, account_id, new_access_token, balance=None, currency=None):
         """Refresh Deriv token"""
@@ -516,6 +517,78 @@ class Database:
         finally:
             cursor.close()
             conn.close()
+
+    # ==================== OAUTH STATE FUNCTIONS ====================
+
+    def save_oauth_state(self, user_id, state, code_verifier):
+        conn = self.get_connection()
+        if not conn:
+            return False
+        
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("""
+                INSERT INTO oauth_states (user_id, state, code_verifier)
+                VALUES (%s, %s, %s)
+            """, (user_id, state, code_verifier))
+            
+            conn.commit()
+            return True
+            
+        except Error as e:
+            print(f"Save oauth state error: {e}")
+            conn.rollback()
+            return False
+            
+        finally:
+            cursor.close()
+            conn.close()
+
+
+    def get_oauth_state(self, state):
+        conn = self.get_connection()
+        if not conn:
+            return None
+        
+        cursor = conn.cursor(dictionary=True)
+        
+        try:
+            cursor.execute("SELECT * FROM oauth_states WHERE state = %s", (state,))
+            result = cursor.fetchone()
+            cursor.fetchall()
+            return result
+            
+        except Error as e:
+            print(f"Get oauth state error: {e}")
+            return None
+            
+        finally:
+            cursor.close()
+            conn.close()
+
+
+    def delete_oauth_state(self, state):
+        conn = self.get_connection()
+        if not conn:
+            return False
+        
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("DELETE FROM oauth_states WHERE state = %s", (state,))
+            conn.commit()
+            return True
+            
+        except Error as e:
+            print(f"Delete oauth state error: {e}")
+            conn.rollback()
+            return False
+            
+        finally:
+            cursor.close()
+            conn.close()        
+                
 
 # Create single instance
 db = Database()
