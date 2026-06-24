@@ -1,11 +1,13 @@
 # backend/routes/deriv_oauth_routes.py
-
+from flask import Blueprint, request, jsonify, redirect
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from flask import session
 import secrets
 import hashlib
 import base64
 from config import Config   # make sure this exists
+
+deriv_oauth_bp = Blueprint('deriv_oauth', __name__)
 
 @deriv_oauth_bp.route('/initiate', methods=['POST'])
 @jwt_required()
