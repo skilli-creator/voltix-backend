@@ -13,10 +13,10 @@ class DerivOAuthService:
     def __init__(self):
         self.client_id = Config.DERIV_APP_ID
         self.redirect_uri = Config.DERIV_REDIRECT_URI
-        self.auth_url = "https://auth.deriv.com/oauth2/auth"
+        self.auth_url = "https://oauth.deriv.com/oauth2/authorize"
         
         # ✅ Try the alternative token endpoint
-        self.token_url = "https://api.deriv.com/oauth2/token"
+        self.token_url = "https://oauth.deriv.com/oauth2/token"
         self.api_base = "https://api.deriv.com"
         
         print(f"🔑 Token URL: {self.token_url}")
@@ -70,12 +70,22 @@ class DerivOAuthService:
         print(f"📡 Token URL: {self.token_url}")
         
         try:
-            with httpx.Client(timeout=30.0, verify=True) as client:
+            print("🌐 Attempting token request...")
+
+            with httpx.Client(timeout=30.0, transport=httpx.HTTPTransport(retries=3)) as client:
                 response = client.post(
                     self.token_url,
-                    data=data,
-                    headers={'Content-Type': 'application/x-www-form-urlencoded'}
+                    data={
+                        "grant_type": "authorization_code",
+                        "code": code,
+                        "redirect_uri": self.redirect_uri,
+                        "client_id": self.client_id,
+                        "code_verifier": code_verifier,
+                    },
                 )
+
+                print("📡 Status:", response.status_code)
+                print("📡 Response:", response.text)
                 
                 if response.status_code == 200:
                     token_data = response.json()
