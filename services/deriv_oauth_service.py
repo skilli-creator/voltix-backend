@@ -40,7 +40,6 @@ class DerivOAuthService:
             'response_type': 'code',
             'client_id': self.client_id,
             'redirect_uri': self.redirect_uri,
-            'scope': 'read write',   # 🔥 ADDED THIS LINE
             'state': state
         }
         
