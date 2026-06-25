@@ -42,14 +42,15 @@ class DerivOAuthService:
         return auth_url, state
     
     def exchange_code_for_tokens(self, code):
+        """Exchange code for tokens - only accepts 1 argument"""
         if not self.is_configured():
             raise Exception("DERIV_APP_ID not configured")
         
         print(f"🔄 Exchanging code for tokens...")
         print(f"📡 Token URL: {self.token_url}")
+        print(f"📝 Code: {code[:20]}...")
         
         try:
-            # Send client_id as form data, no client_secret
             response = requests.post(
                 self.token_url,
                 data={
