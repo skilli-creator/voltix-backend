@@ -1,0 +1,6 @@
+# mise.toml
+[tools]
+python = "3.11"
+
+[settings]
+python_github_attestations = false
