@@ -1,12 +1,14 @@
 # backend/services/deriv_oauth_service.py
 
+import hashlib
+import base64
 import secrets
 import requests
 from urllib.parse import urlencode
 from config import Config
 
 class DerivOAuthService:
-    """Service for handling Deriv OAuth 2.0"""
+    """Service for handling Deriv OAuth 2.0 with PKCE"""
     
     def __init__(self):
         self.client_id = Config.DERIV_APP_ID
@@ -22,9 +24,21 @@ class DerivOAuthService:
     def is_configured(self):
         return bool(self.client_id)
     
+    def generate_pkce_code_verifier(self):
+        """Generate a PKCE code verifier"""
+        return base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b'=').decode('ascii')
+    
+    def generate_pkce_code_challenge(self, code_verifier):
+        """Generate a PKCE code challenge from the verifier"""
+        code_challenge = hashlib.sha256(code_verifier.encode('ascii')).digest()
+        return base64.urlsafe_b64encode(code_challenge).rstrip(b'=').decode('ascii')
+    
     def get_authorization_url(self, state=None):
         if not self.is_configured():
             raise Exception("DERIV_APP_ID not configured")
+        
+        code_verifier = self.generate_pkce_code_verifier()
+        code_challenge = self.generate_pkce_code_challenge(code_verifier)
         
         if not state:
             state = secrets.token_urlsafe(16)
@@ -34,21 +48,24 @@ class DerivOAuthService:
             'client_id': self.client_id,
             'redirect_uri': self.redirect_uri,
             'scope': 'read write',
+            'code_challenge': code_challenge,
+            'code_challenge_method': 'S256',
             'state': state
         }
         
         auth_url = f"{self.auth_url}?{urlencode(params)}"
         print(f"🔍 Generated Auth URL: {auth_url}")
-        return auth_url, state
+        return auth_url, code_verifier, state
     
-    def exchange_code_for_tokens(self, code):
-        """Exchange code for tokens - only accepts 1 argument"""
+    def exchange_code_for_tokens(self, code, code_verifier):
+        """Exchange code for tokens with PKCE code_verifier"""
         if not self.is_configured():
             raise Exception("DERIV_APP_ID not configured")
         
         print(f"🔄 Exchanging code for tokens...")
         print(f"📡 Token URL: {self.token_url}")
         print(f"📝 Code: {code[:20]}...")
+        print(f"🔑 Code Verifier: {code_verifier[:20]}...")
         
         try:
             response = requests.post(
@@ -58,6 +75,7 @@ class DerivOAuthService:
                     "code": code,
                     "redirect_uri": self.redirect_uri,
                     "client_id": self.client_id,
+                    "code_verifier": code_verifier,  # ✅ REQUIRED for PKCE
                 },
                 timeout=30
             )
