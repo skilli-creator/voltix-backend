@@ -1,5 +1,6 @@
 # backend/app.py
 
+import socket
 import os
 import time
 from flask import Flask, jsonify
@@ -15,13 +16,38 @@ from routes.deriv_oauth_routes import deriv_oauth_bp
 
 # Services
 from services.websocket_service import websocket_service
-from services.email_service import EmailService  # ✅ ADD THIS
+from services.email_service import EmailService
+
+
+# ============================================
+# DNS TEST (ADD THIS)
+# ============================================
+def test_dns():
+    print("\n" + "="*50)
+    print("🌐 DNS TEST START")
+    print("="*50)
+    
+    hosts = ["google.com", "api.resend.com", "smtp.gmail.com", "auth.deriv.com"]
+    
+    for host in hosts:
+        try:
+            ip = socket.gethostbyname(host)
+            print(f"✅ {host} → {ip}")
+        except Exception as e:
+            print(f"❌ {host} → {e}")
+    
+    print("="*50)
+    print("🌐 DNS TEST END")
+    print("="*50 + "\n")
 
 
 # ============================================
 # CREATE APP
 # ============================================
 app = Flask(__name__)
+
+# Run DNS test on startup
+test_dns()
 
 
 # ============================================
@@ -32,23 +58,16 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = Config.SECRET_KEY
 app.config['JWT_SECRET_KEY'] = Config.JWT_SECRET_KEY
 
-# ---- SESSION CONFIG (🔥 FIXES YOUR ISSUE) ----
+# ---- SESSION CONFIG ----
 app.config['SESSION_TYPE'] = 'filesystem'
-
-# MUST be True for SameSite=None
 app.config['SESSION_COOKIE_SECURE'] = True  
-
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-
-# 🔥 CRITICAL for OAuth cross-site redirect
 app.config['SESSION_COOKIE_SAMESITE'] = "None"
-
-# Optional: session lifetime (10 minutes)
 app.config['PERMANENT_SESSION_LIFETIME'] = 600
 
 
 # ============================================
-# CORS CONFIG (🔥 REQUIRED FOR COOKIES)
+# CORS CONFIG
 # ============================================
 CORS(
     app,
@@ -68,7 +87,7 @@ jwt = JWTManager(app)
 # ============================================
 # INITIALIZE RESEND EMAIL
 # ============================================
-EmailService.init_resend()  # ✅ ADD THIS
+EmailService.init_resend()
 
 
 # ============================================
