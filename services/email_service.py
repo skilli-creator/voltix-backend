@@ -12,8 +12,22 @@ class EmailService:
     def send_verification_email(to_email, code):
         """Send email verification code to new user"""
         try:
-            # Set timeout
-            socket.setdefaulttimeout(30)
+            print("\n" + "="*50)
+            print("📧 EMAIL DEBUG START - Verification")
+            print("="*50)
+            print(f"HOST: {Config.EMAIL_HOST}")
+            print(f"PORT: {Config.EMAIL_PORT}")
+            print(f"USER: {Config.EMAIL_USER}")
+            print("="*50)
+            
+            # 🔍 STEP 1: DNS CHECK
+            try:
+                print("🌐 Resolving SMTP host...")
+                ip = socket.gethostbyname(Config.EMAIL_HOST)
+                print(f"✅ Resolved {Config.EMAIL_HOST} → {ip}")
+            except Exception as e:
+                print(f"❌ DNS FAILED: {e}")
+                return False
             
             msg = MIMEMultipart()
             msg['From'] = Config.EMAIL_USER
@@ -350,16 +364,36 @@ class EmailService:
             
             msg.attach(MIMEText(html, 'html'))
             
-            with smtplib.SMTP(Config.EMAIL_HOST, Config.EMAIL_PORT, timeout=30) as server:
-                server.starttls()
-                server.login(Config.EMAIL_USER, Config.EMAIL_PASS)
-                server.send_message(msg)
+            # 🔍 STEP 2: CONNECTION CHECK
+            try:
+                print("🔌 Connecting to SMTP server...")
+                server = smtplib.SMTP(Config.EMAIL_HOST, Config.EMAIL_PORT, timeout=10)
+                print("✅ Connected to SMTP server")
+            except Exception as e:
+                print(f"❌ CONNECTION FAILED: {e}")
+                return False
             
-            print(f"✅ Verification email sent to {to_email}")
-            return True
-        except socket.timeout:
-            print(f"❌ Email timeout: Connection to {Config.EMAIL_HOST} timed out")
-            return False
+            # 🔐 STEP 3: LOGIN
+            try:
+                server.starttls()
+                print("🔐 TLS started")
+                server.login(Config.EMAIL_USER, Config.EMAIL_PASS)
+                print("✅ Logged in successfully")
+            except Exception as e:
+                print(f"❌ LOGIN FAILED: {e}")
+                return False
+            
+            # 📤 STEP 4: SEND
+            try:
+                server.send_message(msg)
+                print("✅ Email sent successfully")
+                server.quit()
+                print(f"✅ Verification email sent to {to_email}")
+                return True
+            except Exception as e:
+                print(f"❌ SEND FAILED: {e}")
+                return False
+                
         except Exception as e:
             print(f"❌ Verification email error: {e}")
             return False
@@ -368,8 +402,22 @@ class EmailService:
     def send_password_reset_email(to_email, code):
         """Send password reset code to user"""
         try:
-            # Set timeout
-            socket.setdefaulttimeout(30)
+            print("\n" + "="*50)
+            print("📧 EMAIL DEBUG START - Password Reset")
+            print("="*50)
+            print(f"HOST: {Config.EMAIL_HOST}")
+            print(f"PORT: {Config.EMAIL_PORT}")
+            print(f"USER: {Config.EMAIL_USER}")
+            print("="*50)
+            
+            # 🔍 STEP 1: DNS CHECK
+            try:
+                print("🌐 Resolving SMTP host...")
+                ip = socket.gethostbyname(Config.EMAIL_HOST)
+                print(f"✅ Resolved {Config.EMAIL_HOST} → {ip}")
+            except Exception as e:
+                print(f"❌ DNS FAILED: {e}")
+                return False
             
             msg = MIMEMultipart()
             msg['From'] = Config.EMAIL_USER
@@ -595,16 +643,36 @@ class EmailService:
             
             msg.attach(MIMEText(html, 'html'))
             
-            with smtplib.SMTP(Config.EMAIL_HOST, Config.EMAIL_PORT, timeout=30) as server:
-                server.starttls()
-                server.login(Config.EMAIL_USER, Config.EMAIL_PASS)
-                server.send_message(msg)
+            # 🔍 STEP 2: CONNECTION CHECK
+            try:
+                print("🔌 Connecting to SMTP server...")
+                server = smtplib.SMTP(Config.EMAIL_HOST, Config.EMAIL_PORT, timeout=10)
+                print("✅ Connected to SMTP server")
+            except Exception as e:
+                print(f"❌ CONNECTION FAILED: {e}")
+                return False
             
-            print(f"✅ Password reset email sent to {to_email}")
-            return True
-        except socket.timeout:
-            print(f"❌ Email timeout: Connection to {Config.EMAIL_HOST} timed out")
-            return False
+            # 🔐 STEP 3: LOGIN
+            try:
+                server.starttls()
+                print("🔐 TLS started")
+                server.login(Config.EMAIL_USER, Config.EMAIL_PASS)
+                print("✅ Logged in successfully")
+            except Exception as e:
+                print(f"❌ LOGIN FAILED: {e}")
+                return False
+            
+            # 📤 STEP 4: SEND
+            try:
+                server.send_message(msg)
+                print("✅ Email sent successfully")
+                server.quit()
+                print(f"✅ Password reset email sent to {to_email}")
+                return True
+            except Exception as e:
+                print(f"❌ SEND FAILED: {e}")
+                return False
+                
         except Exception as e:
             print(f"❌ Password reset email error: {e}")
             return False
@@ -613,7 +681,22 @@ class EmailService:
     def send_admin_notification(subject, body):
         """Send notification to admin email"""
         try:
-            socket.setdefaulttimeout(30)
+            print("\n" + "="*50)
+            print("📧 EMAIL DEBUG START - Admin Notification")
+            print("="*50)
+            print(f"HOST: {Config.EMAIL_HOST}")
+            print(f"PORT: {Config.EMAIL_PORT}")
+            print(f"USER: {Config.EMAIL_USER}")
+            print("="*50)
+            
+            # 🔍 STEP 1: DNS CHECK
+            try:
+                print("🌐 Resolving SMTP host...")
+                ip = socket.gethostbyname(Config.EMAIL_HOST)
+                print(f"✅ Resolved {Config.EMAIL_HOST} → {ip}")
+            except Exception as e:
+                print(f"❌ DNS FAILED: {e}")
+                return False
             
             msg = MIMEMultipart()
             msg['From'] = Config.EMAIL_USER
@@ -632,16 +715,36 @@ class EmailService:
             
             msg.attach(MIMEText(html, 'html'))
             
-            with smtplib.SMTP(Config.EMAIL_HOST, Config.EMAIL_PORT, timeout=30) as server:
-                server.starttls()
-                server.login(Config.EMAIL_USER, Config.EMAIL_PASS)
-                server.send_message(msg)
+            # 🔍 STEP 2: CONNECTION CHECK
+            try:
+                print("🔌 Connecting to SMTP server...")
+                server = smtplib.SMTP(Config.EMAIL_HOST, Config.EMAIL_PORT, timeout=10)
+                print("✅ Connected to SMTP server")
+            except Exception as e:
+                print(f"❌ CONNECTION FAILED: {e}")
+                return False
             
-            print(f"✅ Admin notification sent to {Config.ADMIN_EMAIL}")
-            return True
-        except socket.timeout:
-            print(f"❌ Email timeout: Connection to {Config.EMAIL_HOST} timed out")
-            return False
+            # 🔐 STEP 3: LOGIN
+            try:
+                server.starttls()
+                print("🔐 TLS started")
+                server.login(Config.EMAIL_USER, Config.EMAIL_PASS)
+                print("✅ Logged in successfully")
+            except Exception as e:
+                print(f"❌ LOGIN FAILED: {e}")
+                return False
+            
+            # 📤 STEP 4: SEND
+            try:
+                server.send_message(msg)
+                print("✅ Email sent successfully")
+                server.quit()
+                print(f"✅ Admin notification sent to {Config.ADMIN_EMAIL}")
+                return True
+            except Exception as e:
+                print(f"❌ SEND FAILED: {e}")
+                return False
+                
         except Exception as e:
             print(f"❌ Admin notification error: {e}")
             return False
