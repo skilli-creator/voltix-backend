@@ -17,7 +17,7 @@ class DerivOAuthService:
         
         # ✅ Try the alternative token endpoint
         self.token_url = "https://oauth.deriv.com/oauth2/token"
-        self.api_base = "https://api.deriv.com"
+        self.api_base = "https://oauth.deriv.com"
         
         print(f"🔑 Token URL: {self.token_url}")
     
