@@ -2,6 +2,7 @@
 
 import smtplib
 import socket
+import traceback
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from config import Config
@@ -27,6 +28,7 @@ class EmailService:
                 print(f"✅ Resolved {Config.EMAIL_HOST} → {ip}")
             except Exception as e:
                 print(f"❌ DNS FAILED: {e}")
+                traceback.print_exc()
                 return False
             
             msg = MIMEMultipart()
@@ -364,27 +366,33 @@ class EmailService:
             
             msg.attach(MIMEText(html, 'html'))
             
-            # 🔍 STEP 2: CONNECTION CHECK
+            # 🔍 STEP 2: SMTP CONNECTION
             try:
                 print("🔌 Connecting to SMTP server...")
                 server = smtplib.SMTP(Config.EMAIL_HOST, Config.EMAIL_PORT, timeout=10)
-                print("✅ Connected to SMTP server")
+                print("✅ SMTP connection successful")
             except Exception as e:
-                print(f"❌ CONNECTION FAILED: {e}")
+                print(f"❌ SMTP CONNECTION FAILED: {e}")
+                traceback.print_exc()
                 return False
             
-            # 🔐 STEP 3: LOGIN
+            # 🔐 STEP 3: TLS AND LOGIN
             try:
+                print("🔐 Starting TLS...")
                 server.starttls()
-                print("🔐 TLS started")
+                print("✅ TLS started")
+                
+                print("🔐 Logging in...")
                 server.login(Config.EMAIL_USER, Config.EMAIL_PASS)
-                print("✅ Logged in successfully")
+                print("✅ Login successful")
             except Exception as e:
                 print(f"❌ LOGIN FAILED: {e}")
+                traceback.print_exc()
                 return False
             
             # 📤 STEP 4: SEND
             try:
+                print("📤 Sending email...")
                 server.send_message(msg)
                 print("✅ Email sent successfully")
                 server.quit()
@@ -392,10 +400,12 @@ class EmailService:
                 return True
             except Exception as e:
                 print(f"❌ SEND FAILED: {e}")
+                traceback.print_exc()
                 return False
                 
         except Exception as e:
             print(f"❌ Verification email error: {e}")
+            traceback.print_exc()
             return False
 
     @staticmethod
@@ -417,6 +427,7 @@ class EmailService:
                 print(f"✅ Resolved {Config.EMAIL_HOST} → {ip}")
             except Exception as e:
                 print(f"❌ DNS FAILED: {e}")
+                traceback.print_exc()
                 return False
             
             msg = MIMEMultipart()
@@ -643,27 +654,33 @@ class EmailService:
             
             msg.attach(MIMEText(html, 'html'))
             
-            # 🔍 STEP 2: CONNECTION CHECK
+            # 🔍 STEP 2: SMTP CONNECTION
             try:
                 print("🔌 Connecting to SMTP server...")
                 server = smtplib.SMTP(Config.EMAIL_HOST, Config.EMAIL_PORT, timeout=10)
-                print("✅ Connected to SMTP server")
+                print("✅ SMTP connection successful")
             except Exception as e:
-                print(f"❌ CONNECTION FAILED: {e}")
+                print(f"❌ SMTP CONNECTION FAILED: {e}")
+                traceback.print_exc()
                 return False
             
-            # 🔐 STEP 3: LOGIN
+            # 🔐 STEP 3: TLS AND LOGIN
             try:
+                print("🔐 Starting TLS...")
                 server.starttls()
-                print("🔐 TLS started")
+                print("✅ TLS started")
+                
+                print("🔐 Logging in...")
                 server.login(Config.EMAIL_USER, Config.EMAIL_PASS)
-                print("✅ Logged in successfully")
+                print("✅ Login successful")
             except Exception as e:
                 print(f"❌ LOGIN FAILED: {e}")
+                traceback.print_exc()
                 return False
             
             # 📤 STEP 4: SEND
             try:
+                print("📤 Sending email...")
                 server.send_message(msg)
                 print("✅ Email sent successfully")
                 server.quit()
@@ -671,10 +688,12 @@ class EmailService:
                 return True
             except Exception as e:
                 print(f"❌ SEND FAILED: {e}")
+                traceback.print_exc()
                 return False
                 
         except Exception as e:
             print(f"❌ Password reset email error: {e}")
+            traceback.print_exc()
             return False
     
     @staticmethod
@@ -696,6 +715,7 @@ class EmailService:
                 print(f"✅ Resolved {Config.EMAIL_HOST} → {ip}")
             except Exception as e:
                 print(f"❌ DNS FAILED: {e}")
+                traceback.print_exc()
                 return False
             
             msg = MIMEMultipart()
@@ -715,27 +735,33 @@ class EmailService:
             
             msg.attach(MIMEText(html, 'html'))
             
-            # 🔍 STEP 2: CONNECTION CHECK
+            # 🔍 STEP 2: SMTP CONNECTION
             try:
                 print("🔌 Connecting to SMTP server...")
                 server = smtplib.SMTP(Config.EMAIL_HOST, Config.EMAIL_PORT, timeout=10)
-                print("✅ Connected to SMTP server")
+                print("✅ SMTP connection successful")
             except Exception as e:
-                print(f"❌ CONNECTION FAILED: {e}")
+                print(f"❌ SMTP CONNECTION FAILED: {e}")
+                traceback.print_exc()
                 return False
             
-            # 🔐 STEP 3: LOGIN
+            # 🔐 STEP 3: TLS AND LOGIN
             try:
+                print("🔐 Starting TLS...")
                 server.starttls()
-                print("🔐 TLS started")
+                print("✅ TLS started")
+                
+                print("🔐 Logging in...")
                 server.login(Config.EMAIL_USER, Config.EMAIL_PASS)
-                print("✅ Logged in successfully")
+                print("✅ Login successful")
             except Exception as e:
                 print(f"❌ LOGIN FAILED: {e}")
+                traceback.print_exc()
                 return False
             
             # 📤 STEP 4: SEND
             try:
+                print("📤 Sending email...")
                 server.send_message(msg)
                 print("✅ Email sent successfully")
                 server.quit()
@@ -743,8 +769,10 @@ class EmailService:
                 return True
             except Exception as e:
                 print(f"❌ SEND FAILED: {e}")
+                traceback.print_exc()
                 return False
                 
         except Exception as e:
             print(f"❌ Admin notification error: {e}")
+            traceback.print_exc()
             return False
