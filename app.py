@@ -1,3 +1,5 @@
+# backend/app.py
+
 import os
 import time
 from flask import Flask, jsonify
@@ -13,6 +15,7 @@ from routes.deriv_oauth_routes import deriv_oauth_bp
 
 # Services
 from services.websocket_service import websocket_service
+from services.email_service import EmailService  # ✅ ADD THIS
 
 
 # ============================================
@@ -60,6 +63,12 @@ CORS(
 # EXTENSIONS
 # ============================================
 jwt = JWTManager(app)
+
+
+# ============================================
+# INITIALIZE RESEND EMAIL
+# ============================================
+EmailService.init_resend()  # ✅ ADD THIS
 
 
 # ============================================
