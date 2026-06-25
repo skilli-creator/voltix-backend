@@ -64,7 +64,7 @@ class DerivOAuthService:
             'client_id': self.client_id,
             'code': code,
             'redirect_uri': self.redirect_uri,
-            'code_verifier': code_verifier
+            
         }
         
         print(f"🔄 Exchanging code for tokens...")
