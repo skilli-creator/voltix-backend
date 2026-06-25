@@ -1,37 +1,30 @@
 # backend/services/deriv_oauth_service.py
 
-import hashlib
-import base64
 import secrets
 import requests
 from urllib.parse import urlencode
 from config import Config
-from requests.auth import HTTPBasicAuth
 
 class DerivOAuthService:
     """Service for handling Deriv OAuth 2.0"""
     
     def __init__(self):
         self.client_id = Config.DERIV_APP_ID
-        self.client_secret = Config.DERIV_CLIENT_SECRET
         self.redirect_uri = Config.DERIV_REDIRECT_URI
-        
-        # ✅ CORRECT DOMAINS
         self.auth_url = "https://oauth.deriv.com/oauth2/authorize"
         self.token_url = "https://oauth.deriv.com/oauth2/token"
         self.api_base = "https://api.deriv.com"
         
         print(f"🔑 Client ID: {self.client_id}")
-        print(f"🔑 Client Secret set: {bool(self.client_secret)}")
         print(f"🔗 Auth URL: {self.auth_url}")
         print(f"🔗 Token URL: {self.token_url}")
     
     def is_configured(self):
-        return bool(self.client_id) and bool(self.client_secret)
+        return bool(self.client_id)
     
     def get_authorization_url(self, state=None):
         if not self.is_configured():
-            raise Exception("DERIV_APP_ID or DERIV_CLIENT_SECRET not configured")
+            raise Exception("DERIV_APP_ID not configured")
         
         if not state:
             state = secrets.token_urlsafe(16)
@@ -40,6 +33,7 @@ class DerivOAuthService:
             'response_type': 'code',
             'client_id': self.client_id,
             'redirect_uri': self.redirect_uri,
+            'scope': 'read write',
             'state': state
         }
         
@@ -49,20 +43,21 @@ class DerivOAuthService:
     
     def exchange_code_for_tokens(self, code):
         if not self.is_configured():
-            raise Exception("DERIV_APP_ID or DERIV_CLIENT_SECRET not configured")
+            raise Exception("DERIV_APP_ID not configured")
         
         print(f"🔄 Exchanging code for tokens...")
         print(f"📡 Token URL: {self.token_url}")
         
         try:
+            # Send client_id as form data, no client_secret
             response = requests.post(
                 self.token_url,
                 data={
                     "grant_type": "authorization_code",
                     "code": code,
                     "redirect_uri": self.redirect_uri,
+                    "client_id": self.client_id,
                 },
-                auth=HTTPBasicAuth(self.client_id, self.client_secret),
                 timeout=30
             )
             
