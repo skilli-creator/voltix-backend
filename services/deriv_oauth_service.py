@@ -44,6 +44,7 @@ class DerivOAuthService:
         params = {
             'response_type': 'code',
             'client_id': self.client_id,
+            'client_secret': self.client_secret,
             'redirect_uri': self.redirect_uri,
             'code_challenge': code_challenge,
             'code_challenge_method': 'S256',
