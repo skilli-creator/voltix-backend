@@ -14,7 +14,7 @@ class DerivOAuthService:
         self.client_id = Config.DERIV_APP_ID
         self.redirect_uri = Config.DERIV_REDIRECT_URI
         self.auth_url = "https://oauth.deriv.com/oauth2/authorize"
-        self.token_url = "https://oauth.deriv.com/oauth2/token"
+        token_url = "https://api.deriv.com/oauth2/token"
         self.api_base = "https://api.deriv.com"
         
         print(f"🔑 Client ID: {self.client_id}")
