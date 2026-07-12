@@ -7,11 +7,10 @@ load_dotenv()
 
 class Config:
     # ============================================
-    # SECRETS
+    # SECRETS - MUST come from environment
     # ============================================
     SECRET_KEY = os.getenv('SECRET_KEY')
     JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY')
-    JWT_ACCESS_TOKEN_EXPIRES = timedelta(days=7)
     
     # ✅ Early validation for critical secrets
     if not SECRET_KEY:
@@ -19,12 +18,13 @@ class Config:
     if not JWT_SECRET_KEY:
         raise ValueError("❌ JWT_SECRET_KEY must be set in .env")
     
+    JWT_ACCESS_TOKEN_EXPIRES = timedelta(days=7)
+    
     # ============================================
     # DATABASE
     # ============================================
     DATABASE_URL = os.getenv('DATABASE_URL')
     
-    # ✅ Early validation
     if not DATABASE_URL:
         raise ValueError("❌ DATABASE_URL must be set in .env")
     
@@ -42,7 +42,7 @@ class Config:
     }
     
     # ============================================
-    # DERIV
+    # DERIV - MANUAL API TOKEN ONLY (No OAuth)
     # ============================================
     # ✅ Smart fallback: if non-numeric, use default
     raw_app_id = os.getenv('DERIV_APP_ID')
@@ -52,18 +52,14 @@ class Config:
         DERIV_APP_ID = '1089'  # Safe fallback
     
     DERIV_WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={DERIV_APP_ID}"
-    DERIV_REDIRECT_URI = os.getenv('DERIV_REDIRECT_URI')
     
-    # ✅ Early validation
-    if not DERIV_REDIRECT_URI:
-        raise ValueError("❌ DERIV_REDIRECT_URI must be set in .env")
+    # ❌ REMOVED: DERIV_REDIRECT_URI - Not needed for manual API token
     
     # ============================================
     # ENCRYPTION
     # ============================================
     ENCRYPTION_KEY = os.getenv('ENCRYPTION_KEY')
     
-    # ✅ Early validation
     if not ENCRYPTION_KEY:
         raise ValueError("❌ ENCRYPTION_KEY must be set in .env")
     
@@ -72,7 +68,6 @@ class Config:
     # ============================================
     FRONTEND_URL = os.getenv('FRONTEND_URL')
     
-    # ✅ Early validation
     if not FRONTEND_URL:
         raise ValueError("❌ FRONTEND_URL must be set in .env")
     
@@ -100,7 +95,7 @@ class Config:
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
     
     # ============================================
-    # VALIDATION - ✅ Runtime check with clear messages
+    # VALIDATION - ✅ Only required variables
     # ============================================
     @staticmethod
     def validate():
@@ -109,7 +104,6 @@ class Config:
             "SECRET_KEY",
             "JWT_SECRET_KEY",
             "DATABASE_URL",
-            "DERIV_REDIRECT_URI",
             "ENCRYPTION_KEY",
             "FRONTEND_URL"
         ]
