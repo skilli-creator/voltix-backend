@@ -55,11 +55,10 @@ class Database:
         conn = self.get_connection()
         if conn:
             print("✅ Database connected successfully!")
-            # Consume any pending results before closing
             try:
                 cursor = conn.cursor()
                 cursor.execute("SELECT 1")
-                cursor.fetchall()  # Consume all results
+                cursor.fetchall()
                 cursor.close()
             except:
                 pass
@@ -68,6 +67,45 @@ class Database:
         else:
             print("❌ Database connection failed!")
             return False
+    
+    def ensure_tables(self):
+        """✅ Create required tables if they don't exist"""
+        conn = self.get_connection()
+        if not conn:
+            return False
+        
+        cursor = conn.cursor()
+        
+        try:
+            # Create deriv_accounts table if not exists
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS deriv_accounts (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    api_token TEXT NOT NULL,
+                    account_id VARCHAR(100),
+                    currency VARCHAR(10) DEFAULT 'USD',
+                    balance DECIMAL(20, 8) DEFAULT 0,
+                    is_connected BOOLEAN DEFAULT FALSE,
+                    connection_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    last_active_at DATETIME,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_user_id (user_id),
+                    UNIQUE KEY unique_user (user_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            
+            conn.commit()
+            print("✅ Tables ensured")
+            return True
+            
+        except Error as e:
+            print(f"Table creation error: {e}")
+            return False
+        finally:
+            cursor.close()
+            conn.close()
     
     # ==================== USER FUNCTIONS ====================
     
@@ -102,7 +140,6 @@ class Database:
         try:
             cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
             user = cursor.fetchone()
-            # Consume any remaining results
             cursor.fetchall()
             return user
         except Error as e:
@@ -113,7 +150,6 @@ class Database:
             conn.close()
     
     def get_user_by_phone(self, phone):
-        """Get user by phone number"""
         conn = self.get_connection()
         if not conn:
             return None
@@ -122,7 +158,6 @@ class Database:
         try:
             cursor.execute("SELECT * FROM users WHERE phone = %s", (phone,))
             user = cursor.fetchone()
-            # Consume any remaining results
             cursor.fetchall()
             return user
         except Error as e:
@@ -139,9 +174,11 @@ class Database:
         
         cursor = conn.cursor(dictionary=True)
         try:
-            cursor.execute("SELECT id, email, first_name, last_name, phone, email_verified, is_active FROM users WHERE id = %s", (user_id,))
+            cursor.execute("""
+                SELECT id, email, first_name, last_name, phone, email_verified, is_active 
+                FROM users WHERE id = %s
+            """, (user_id,))
             user = cursor.fetchone()
-            # Consume any remaining results
             cursor.fetchall()
             return user
         except Error as e:
@@ -218,9 +255,10 @@ class Database:
         
         cursor = conn.cursor(dictionary=True)
         try:
-            cursor.execute("SELECT verification_code, code_expires_at FROM users WHERE id = %s", (user_id,))
+            cursor.execute("""
+                SELECT verification_code, code_expires_at FROM users WHERE id = %s
+            """, (user_id,))
             user = cursor.fetchone()
-            # Consume any remaining results
             cursor.fetchall()
             
             if not user:
@@ -236,13 +274,14 @@ class Database:
             cursor.close()
             conn.close()
     
-    # ==================== DERIV OAUTH FUNCTIONS ====================
+    # ============================================
+    # ✅ DERIV ACCOUNT FUNCTIONS (Manual API Token)
+    # ============================================
     
-    def save_deriv_token(self, user_id, access_token, account_id=None, email=None, 
-                         account_type='Demo', currency='USD', balance=0):
+    def save_deriv_token(self, user_id, encrypted_token, account_id=None, 
+                         currency='USD', balance=0):
         """
-        Save or update Deriv OAuth token for a user
-        Uses your existing deriv_accounts table
+        ✅ Save or update Deriv API token for a user
         """
         conn = self.get_connection()
         if not conn:
@@ -252,36 +291,29 @@ class Database:
         
         try:
             # Check if account exists for user
-            cursor.execute("SELECT id FROM deriv_accounts WHERE user_id = %s AND account_id = %s", 
-                          (user_id, account_id))
+            cursor.execute("SELECT id FROM deriv_accounts WHERE user_id = %s", (user_id,))
             existing = cursor.fetchone()
-            # Consume any remaining results
             cursor.fetchall()
             
-            # Access token might be long - store as binary
-            token_binary = access_token.encode('utf-8')
-            
             if existing:
-                # Update existing account
+                # Update existing
                 cursor.execute("""
                     UPDATE deriv_accounts 
-                    SET token = %s, 
+                    SET api_token = %s, 
+                        account_id = %s,
                         balance = %s, 
                         currency = %s,
-                        account_type = %s,
-                        email = %s,
-                        is_active = 1,
-                        last_sync_at = CURRENT_TIMESTAMP,
-                        last_error = NULL
-                    WHERE user_id = %s AND account_id = %s
-                """, (token_binary, balance, currency, account_type, email, user_id, account_id))
+                        is_connected = 1,
+                        last_active_at = NOW()
+                    WHERE user_id = %s
+                """, (encrypted_token, account_id, balance, currency, user_id))
             else:
-                # Insert new account
+                # Insert new
                 cursor.execute("""
                     INSERT INTO deriv_accounts 
-                    (user_id, account_id, email, token, balance, currency, account_type, is_active)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, 1)
-                """, (user_id, account_id, email, token_binary, balance, currency, account_type))
+                    (user_id, api_token, account_id, balance, currency, is_connected, connection_date, last_active_at)
+                    VALUES (%s, %s, %s, %s, %s, 1, NOW(), NOW())
+                """, (user_id, encrypted_token, account_id, balance, currency))
             
             conn.commit()
             return True
@@ -294,10 +326,9 @@ class Database:
             cursor.close()
             conn.close()
     
-    def get_deriv_token(self, user_id, account_id=None):
+    def get_deriv_token(self, user_id):
         """
-        Get Deriv token for a user
-        If account_id is None, returns the first active account
+        ✅ Get Deriv token for a user
         """
         conn = self.get_connection()
         if not conn:
@@ -306,26 +337,13 @@ class Database:
         cursor = conn.cursor(dictionary=True)
         
         try:
-            if account_id:
-                cursor.execute("""
-                    SELECT * FROM deriv_accounts 
-                    WHERE user_id = %s AND account_id = %s AND is_active = 1
-                """, (user_id, account_id))
-            else:
-                cursor.execute("""
-                    SELECT * FROM deriv_accounts 
-                    WHERE user_id = %s AND is_active = 1
-                    ORDER BY created_at DESC LIMIT 1
-                """, (user_id,))
+            cursor.execute("""
+                SELECT * FROM deriv_accounts 
+                WHERE user_id = %s AND is_connected = 1
+            """, (user_id,))
             
             result = cursor.fetchone()
-            # Consume any remaining results
             cursor.fetchall()
-            
-            # Decode token from binary to string
-            if result and result.get('token'):
-                result['access_token'] = result['token'].decode('utf-8')
-            
             return result
             
         except Error as e:
@@ -335,41 +353,10 @@ class Database:
             cursor.close()
             conn.close()
     
-    def get_all_deriv_accounts(self, user_id):
-        """Get all Deriv accounts for a user"""
-        conn = self.get_connection()
-        if not conn:
-            return []
-        
-        cursor = conn.cursor(dictionary=True)
-        
-        try:
-            cursor.execute("""
-                SELECT * FROM deriv_accounts 
-                WHERE user_id = %s AND is_active = 1
-                ORDER BY created_at DESC
-            """, (user_id,))
-            
-            results = cursor.fetchall()
-            # Consume any remaining results
-            cursor.fetchall()
-            
-            # Decode tokens
-            for result in results:
-                if result.get('token'):
-                    result['access_token'] = result['token'].decode('utf-8')
-            
-            return results
-            
-        except Error as e:
-            print(f"Get all deriv accounts error: {e}")
-            return []
-        finally:
-            cursor.close()
-            conn.close()
-    
-    def update_deriv_balance(self, user_id, account_id, balance, currency='USD'):
-        """Update user's Deriv account balance"""
+    def update_deriv_balance(self, user_id, balance):
+        """
+        ✅ Update user's Deriv account balance
+        """
         conn = self.get_connection()
         if not conn:
             return False
@@ -379,9 +366,9 @@ class Database:
         try:
             cursor.execute("""
                 UPDATE deriv_accounts 
-                SET balance = %s, currency = %s, last_sync_at = CURRENT_TIMESTAMP
-                WHERE user_id = %s AND account_id = %s
-            """, (balance, currency, user_id, account_id))
+                SET balance = %s, last_active_at = NOW()
+                WHERE user_id = %s
+            """, (balance, user_id))
             conn.commit()
             return True
             
@@ -393,8 +380,10 @@ class Database:
             cursor.close()
             conn.close()
     
-    def update_deriv_profit_loss(self, user_id, account_id, profits=0, losses=0):
-        """Update profit/loss for a Deriv account"""
+    def disconnect_deriv(self, user_id):
+        """
+        ✅ Disconnect Deriv account
+        """
         conn = self.get_connection()
         if not conn:
             return False
@@ -404,149 +393,24 @@ class Database:
         try:
             cursor.execute("""
                 UPDATE deriv_accounts 
-                SET profits_made = profits_made + %s, 
-                    losses_made = losses_made + %s,
-                    last_sync_at = CURRENT_TIMESTAMP
-                WHERE user_id = %s AND account_id = %s
-            """, (profits, losses, user_id, account_id))
+                SET is_connected = 0, last_active_at = NOW()
+                WHERE user_id = %s
+            """, (user_id,))
             conn.commit()
             return True
             
         except Error as e:
-            print(f"Update deriv profit/loss error: {e}")
+            print(f"Disconnect deriv error: {e}")
             conn.rollback()
             return False
         finally:
             cursor.close()
             conn.close()
     
-    def deactivate_deriv_token(self, user_id, account_id=None):
-        """Deactivate (disconnect) Deriv token(s)"""
-        conn = self.get_connection()
-        if not conn:
-            return False
-        
-        cursor = conn.cursor()
-        
-        try:
-            if account_id:
-                cursor.execute("""
-                    UPDATE deriv_accounts 
-                    SET is_active = 0, last_sync_at = CURRENT_TIMESTAMP
-                    WHERE user_id = %s AND account_id = %s
-                """, (user_id, account_id))
-            else:
-                cursor.execute("""
-                    UPDATE deriv_accounts 
-                    SET is_active = 0, last_sync_at = CURRENT_TIMESTAMP
-                    WHERE user_id = %s
-                """, (user_id,))
-            
-            conn.commit()
-            return True
-            
-        except Error as e:
-            print(f"Deactivate deriv token error: {e}")
-            conn.rollback()
-            return False
-        finally:
-            cursor.close()
-            conn.close()
-    
-    def update_deriv_error(self, user_id, account_id, error_message):
-        """Log error for a Deriv account"""
-        conn = self.get_connection()
-        if not conn:
-            return False
-        
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute("""
-                UPDATE deriv_accounts 
-                SET last_error = %s, last_sync_at = CURRENT_TIMESTAMP
-                WHERE user_id = %s AND account_id = %s
-            """, (error_message, user_id, account_id))
-            conn.commit()
-            return True
-            
-        except Error as e:
-            print(f"Update deriv error: {e}")
-            conn.rollback()
-            return False
-        finally:
-            cursor.close()
-            conn.close()
-
-    
-    def refresh_deriv_token(self, user_id, account_id, new_access_token, balance=None, currency=None):
-        """Refresh Deriv token"""
-        conn = self.get_connection()
-        if not conn:
-            return False
-        
-        cursor = conn.cursor()
-        token_binary = new_access_token.encode('utf-8')
-        
-        try:
-            query = """
-                UPDATE deriv_accounts 
-                SET token = %s, last_sync_at = CURRENT_TIMESTAMP
-            """
-            params = [token_binary]
-            
-            if balance is not None:
-                query += ", balance = %s"
-                params.append(balance)
-            
-            if currency:
-                query += ", currency = %s"
-                params.append(currency)
-            
-            query += " WHERE user_id = %s AND account_id = %s"
-            params.extend([user_id, account_id])
-            
-            cursor.execute(query, tuple(params))
-            conn.commit()
-            return True
-            
-        except Error as e:
-            print(f"Refresh deriv token error: {e}")
-            conn.rollback()
-            return False
-        finally:
-            cursor.close()
-            conn.close()
-
-    # ==================== OAUTH STATE FUNCTIONS ====================
-
-    def save_oauth_state(self, user_id, state, code_verifier):
-        conn = self.get_connection()
-        if not conn:
-            return False
-        
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute("""
-                INSERT INTO oauth_states (user_id, state, code_verifier)
-                VALUES (%s, %s, %s)
-            """, (user_id, state, code_verifier))
-            
-            conn.commit()
-            return True
-            
-        except Error as e:
-            print(f"Save oauth state error: {e}")
-            conn.rollback()
-            return False
-            
-        finally:
-            cursor.close()
-            conn.close()
-
-
-    def get_oauth_state(self, state):
+    def get_deriv_account_status(self, user_id):
+        """
+        ✅ Get Deriv account status
+        """
         conn = self.get_connection()
         if not conn:
             return None
@@ -554,41 +418,36 @@ class Database:
         cursor = conn.cursor(dictionary=True)
         
         try:
-            cursor.execute("SELECT * FROM oauth_states WHERE state = %s", (state,))
+            cursor.execute("""
+                SELECT id, account_id, currency, balance, is_connected, 
+                       connection_date, last_active_at
+                FROM deriv_accounts 
+                WHERE user_id = %s
+            """, (user_id,))
+            
             result = cursor.fetchone()
             cursor.fetchall()
+            
+            if not result:
+                return {'isConnected': False}
+            
             return result
             
         except Error as e:
-            print(f"Get oauth state error: {e}")
+            print(f"Get deriv status error: {e}")
             return None
-            
         finally:
             cursor.close()
             conn.close()
-
-
-    def delete_oauth_state(self, state):
-        conn = self.get_connection()
-        if not conn:
-            return False
-        
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute("DELETE FROM oauth_states WHERE state = %s", (state,))
-            conn.commit()
-            return True
-            
-        except Error as e:
-            print(f"Delete oauth state error: {e}")
-            conn.rollback()
-            return False
-            
-        finally:
-            cursor.close()
-            conn.close()        
-                
+    
+    def deactivate_deriv_token(self, user_id):
+        """
+        ✅ Deactivate Deriv token (legacy - use disconnect_deriv)
+        """
+        return self.disconnect_deriv(user_id)
 
 # Create single instance
 db = Database()
+
+# ✅ Ensure tables exist on import
+db.ensure_tables()

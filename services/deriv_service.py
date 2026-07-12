@@ -7,7 +7,8 @@ import base64
 import logging
 from datetime import datetime
 from cryptography.fernet import Fernet
-from models.database import db, DerivAccount
+from models.database import db
+
 
 # ============================================
 # LOGGING
