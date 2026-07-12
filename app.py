@@ -1,4 +1,5 @@
 # backend/app.py
+
 import socket
 import os
 import time
@@ -78,13 +79,28 @@ app.config['SESSION_COOKIE_SAMESITE'] = "None" if not app_config.DEBUG else "Lax
 app.config['PERMANENT_SESSION_LIFETIME'] = 600
 
 # ============================================
-# CORS CONFIG
+# ✅ FIXED: CORS CONFIG - Allow all methods
 # ============================================
 CORS(
     app,
     supports_credentials=True,
-    origins=app_config.CORS_ORIGINS
+    origins=app_config.CORS_ORIGINS,
+    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["Content-Type", "Authorization", "Accept", "Origin"],
+    expose_headers=["Content-Type", "Authorization"],
+    max_age=3600
 )
+
+# ============================================
+# ✅ FIXED: Add OPTIONS handler for all routes
+# ============================================
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept,Origin')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH')
+    response.headers.add('Access-Control-Allow-Credentials', 'true')
+    return response
 
 # ============================================
 # EXTENSIONS
@@ -126,11 +142,13 @@ def add_security_headers(response):
     return response
 
 # ============================================
-# REQUEST LOGGING
+# REQUEST LOGGING - ✅ Log ALL requests
 # ============================================
 @app.before_request
 def log_request():
-    logger.info(f"{request.method} {request.path}")
+    logger.info(f"{request.method} {request.path} - Headers: {dict(request.headers)}")
+    if request.method in ['POST', 'PUT', 'PATCH']:
+        logger.info(f"Body: {request.get_json(silent=True)}")
 
 # ============================================
 # INITIALIZE RESEND EMAIL
