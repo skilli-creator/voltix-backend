@@ -1,19 +1,49 @@
 # backend/services/deriv_service.py
+
 import websocket
 import json
 import threading
+import requests
 from config import Config
 
 class DerivService:
     
-    # CORRECT Deriv WebSocket URL
-    DERIV_WS_URL = "wss://ws.derivws.com/websockets/v3"
-    DERIV_APP_ID = "1089"  # Demo App ID
+    # ✅ NEWER OTP-BASED WebSocket Method (Handles both Demo & Real)
+    DERIV_OTP_URL = "https://api.derivws.com/trading/v1/options/accounts"
     
     @staticmethod
-    def _get_ws_url():
-        """Get WebSocket URL with App ID"""
-        return f"{DerivService.DERIV_WS_URL}?app_id={DerivService.DERIV_APP_ID}"
+    def _get_otp_ws_url(account_id, api_token=None):
+        """
+        Get WebSocket URL with OTP (new secure method)
+        Handles both demo and real accounts
+        """
+        try:
+            headers = {}
+            if api_token:
+                headers['Authorization'] = f'Bearer {api_token}'
+            
+            response = requests.post(
+                f"{DerivService.DERIV_OTP_URL}/{account_id}/otp",
+                headers=headers,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                ws_url = data.get('url')
+                if ws_url:
+                    print(f"🔌 OTP WebSocket URL obtained: {ws_url[:50]}...")
+                    return ws_url
+                else:
+                    print(f"⚠️ No URL in OTP response: {data}")
+                    return None
+            else:
+                print(f"⚠️ OTP request failed: {response.status_code} - {response.text}")
+                return None
+                
+        except Exception as e:
+            print(f"⚠️ OTP error: {e}")
+            return None
     
     @staticmethod
     def _close_ws_safely(ws):
@@ -23,25 +53,52 @@ class DerivService:
         except:
             pass
     
-    # ==================== CONNECTION TEST ====================
+    # ==================== CONNECTION TEST (OTP Method - NEW) ====================
     
     @staticmethod
-    def test_connection(api_token):
-        """Test if the API token is valid using WebSocket"""
+    def test_connection(api_token, account_id=None):
+        """
+        Test connection using OTP method (new secure method)
+        Handles both demo and real accounts
+        
+        Args:
+            api_token: The Deriv API token
+            account_id: Optional - if not provided, will try to get from token
+        """
         result = {"success": False, "data": None, "error": None}
         response_received = threading.Event()
+        
+        # If account_id not provided, we need to get it first
+        # For demo accounts, we can use a default or get from token
+        if not account_id:
+            # Try to get account_id from the token via a quick connection
+            account_id = DerivService._get_account_id_from_token(api_token)
+            if not account_id:
+                return False, "Could not determine account ID. Please provide account_id."
+        
+        # Get OTP URL
+        ws_url = DerivService._get_otp_ws_url(account_id, api_token)
+        if not ws_url:
+            return False, "Failed to get OTP URL. Please check your account_id and token."
         
         def on_message(ws, message):
             data = json.loads(message)
             print(f"📨 Response: {data}")
             
+            # Check for authorization success
             if data.get('authorize'):
                 result["success"] = True
                 result["data"] = data['authorize']
                 response_received.set()
                 DerivService._close_ws_safely(ws)
+            # Check for success format { "code": 0, "msg": "authorize" }
+            elif data.get('code') == 0 and data.get('msg') == 'authorize':
+                result["success"] = True
+                result["data"] = {"msg": "authorize", "code": 0}
+                response_received.set()
+                DerivService._close_ws_safely(ws)
             elif data.get('error'):
-                result["error"] = data['error']['message']
+                result["error"] = data['error'].get('message', 'Unknown error')
                 response_received.set()
                 DerivService._close_ws_safely(ws)
         
@@ -51,15 +108,13 @@ class DerivService:
             response_received.set()
         
         def on_open(ws):
-            ws_url = DerivService._get_ws_url()
-            print(f"🔌 WebSocket connected to {ws_url}")
+            print(f"🔌 WebSocket connected via OTP")
             print(f"🔑 Authorizing with token: {api_token[:20]}...")
             ws.send(json.dumps({"authorize": api_token}))
         
         def on_close(ws, close_status_code, close_msg):
             print(f"🔌 WebSocket closed: {close_status_code} - {close_msg}")
         
-        ws_url = DerivService._get_ws_url()
         ws = websocket.WebSocketApp(
             ws_url,
             on_open=on_open,
@@ -72,30 +127,95 @@ class DerivService:
         wst.daemon = True
         wst.start()
         
-        response_received.wait(timeout=10)
+        response_received.wait(timeout=15)
         
         if result["success"]:
-            print(f"✅ Authorization successful!")
+            print(f"✅ Authorization successful (OTP method)!")
             return True, result["data"]
         else:
-            print(f"❌ Authorization failed: {result['error']}")
+            print(f"❌ Authorization failed (OTP method): {result['error']}")
             return False, result["error"] or "Connection failed"
+    
+    # ==================== GET ACCOUNT ID FROM TOKEN ====================
+    
+    @staticmethod
+    def _get_account_id_from_token(api_token):
+        """
+        Get account_id from the token by making a quick connection
+        """
+        result = {"account_id": None, "error": None}
+        response_received = threading.Event()
+        ws_url = "wss://ws.derivws.com/websockets/v3?app_id=1089"
+        
+        def on_message(ws, message):
+            data = json.loads(message)
+            print(f"📨 Account ID Response: {data}")
+            
+            if data.get('authorize'):
+                result["account_id"] = data['authorize'].get('loginid')
+                response_received.set()
+                DerivService._close_ws_safely(ws)
+            elif data.get('code') == 0 and data.get('msg') == 'authorize':
+                # Wait for the next message with account data
+                pass
+            elif data.get('error'):
+                result["error"] = data['error'].get('message', 'Unknown error')
+                response_received.set()
+                DerivService._close_ws_safely(ws)
+        
+        def on_error(ws, error):
+            result["error"] = str(error)
+            response_received.set()
+        
+        def on_open(ws):
+            ws.send(json.dumps({"authorize": api_token}))
+        
+        ws = websocket.WebSocketApp(
+            ws_url,
+            on_open=on_open,
+            on_message=on_message,
+            on_error=on_error
+        )
+        
+        wst = threading.Thread(target=ws.run_forever)
+        wst.daemon = True
+        wst.start()
+        
+        response_received.wait(timeout=10)
+        
+        if result["account_id"]:
+            print(f"✅ Account ID retrieved: {result['account_id']}")
+            return result["account_id"]
+        else:
+            print(f"❌ Failed to get account ID: {result['error']}")
+            return None
     
     # ==================== ACCOUNT INFO ====================
     
     @staticmethod
-    def get_account_info(api_token):
-        """Get account information using WebSocket - returns authorized account info directly"""
+    def get_account_info(api_token, account_id=None):
+        """Get account information using OTP WebSocket"""
         result = {"success": False, "info": None, "error": None}
         response_received = threading.Event()
+        authorized = False
+        
+        if not account_id:
+            account_id = DerivService._get_account_id_from_token(api_token)
+            if not account_id:
+                return False, "Could not determine account ID"
+        
+        ws_url = DerivService._get_otp_ws_url(account_id, api_token)
+        if not ws_url:
+            return False, "Failed to get OTP URL"
         
         def on_message(ws, message):
+            nonlocal authorized
             data = json.loads(message)
             print(f"📨 Account Info Response: {data}")
             
             if data.get('authorize'):
+                authorized = True
                 authorize_data = data['authorize']
-                # Use the authorized account directly (NO switching)
                 result["success"] = True
                 result["info"] = {
                     'account_id': authorize_data.get('loginid', ''),
@@ -107,8 +227,10 @@ class DerivService:
                 }
                 response_received.set()
                 DerivService._close_ws_safely(ws)
+            elif data.get('code') == 0 and data.get('msg') == 'authorize':
+                authorized = True
             elif data.get('error'):
-                result["error"] = data['error']['message']
+                result["error"] = data['error'].get('message', 'Unknown error')
                 response_received.set()
                 DerivService._close_ws_safely(ws)
         
@@ -119,14 +241,13 @@ class DerivService:
         def on_open(ws):
             ws.send(json.dumps({"authorize": api_token}))
         
-        ws_url = DerivService._get_ws_url()
         ws = websocket.WebSocketApp(ws_url, on_open=on_open, on_message=on_message, on_error=on_error)
         
         wst = threading.Thread(target=ws.run_forever)
         wst.daemon = True
         wst.start()
         
-        response_received.wait(timeout=10)
+        response_received.wait(timeout=15)
         
         if result["success"]:
             return True, result["info"]
@@ -136,19 +257,32 @@ class DerivService:
     # ==================== BALANCE ====================
     
     @staticmethod
-    def get_balance(api_token):
-        """Get account balance using WebSocket - uses authorized account directly (NO switching)"""
+    def get_balance(api_token, account_id=None):
+        """Get account balance using OTP WebSocket"""
         result = {"success": False, "balance": None, "currency": None, "error": None, "loginid": None}
         response_received = threading.Event()
+        authorized = False
+        
+        if not account_id:
+            account_id = DerivService._get_account_id_from_token(api_token)
+            if not account_id:
+                return False, "Could not determine account ID", None, None
+        
+        ws_url = DerivService._get_otp_ws_url(account_id, api_token)
+        if not ws_url:
+            return False, "Failed to get OTP URL", None, None
         
         def on_message(ws, message):
+            nonlocal authorized
             data = json.loads(message)
             print(f"📨 Balance Response: {data}")
             
             if data.get('authorize'):
-                # After authorization, directly get balance (NO switch_account)
+                authorized = True
                 ws.send(json.dumps({"balance": 1}))
-            
+            elif data.get('code') == 0 and data.get('msg') == 'authorize':
+                authorized = True
+                ws.send(json.dumps({"balance": 1}))
             elif data.get('balance'):
                 result["success"] = True
                 result["balance"] = data['balance']['balance']
@@ -156,9 +290,8 @@ class DerivService:
                 result["loginid"] = data['balance']['loginid']
                 response_received.set()
                 DerivService._close_ws_safely(ws)
-            
             elif data.get('error'):
-                result["error"] = data['error']['message']
+                result["error"] = data['error'].get('message', 'Unknown error')
                 response_received.set()
                 DerivService._close_ws_safely(ws)
         
@@ -169,7 +302,6 @@ class DerivService:
         def on_open(ws):
             ws.send(json.dumps({"authorize": api_token}))
         
-        ws_url = DerivService._get_ws_url()
         ws = websocket.WebSocketApp(ws_url, on_open=on_open, on_message=on_message, on_error=on_error)
         
         wst = threading.Thread(target=ws.run_forever)
@@ -182,263 +314,10 @@ class DerivService:
             return True, result["balance"], result["currency"], result["loginid"]
         else:
             return False, result["error"] or "Failed to get balance", None, None
-    
-    # ==================== PLACE TRADE ====================
-    
-    @staticmethod
-    def place_trade(api_token, symbol, trade_type, amount, duration, duration_unit='t'):
-        """Place a binary option trade on Deriv using WebSocket - uses authorized account directly"""
-        result = {"success": False, "trade": None, "error": None}
-        response_received = threading.Event()
-        
-        def on_message(ws, message):
-            data = json.loads(message)
-            print(f"📨 Trade Response: {data}")
-            
-            if data.get('authorize'):
-                # After authorization, directly send proposal (NO switch_account)
-                ws.send(json.dumps({
-                    "proposal": 1,
-                    "amount": amount,
-                    "basis": "stake",
-                    "contract_type": trade_type,
-                    "currency": "USD",
-                    "duration": duration,
-                    "duration_unit": duration_unit,
-                    "symbol": symbol
-                }))
-            
-            elif data.get('proposal'):
-                proposal_id = data['proposal']['id']
-                print(f"📊 Proposal received! ID: {proposal_id}")
-                ws.send(json.dumps({
-                    "buy": proposal_id,
-                    "price": amount
-                }))
-            
-            elif data.get('buy'):
-                result["success"] = True
-                result["trade"] = {
-                    'contract_id': data['buy']['contract_id'],
-                    'buy_price': data['buy']['buy_price'],
-                    'longcode': data['buy'].get('longcode', '')
-                }
-                print(f"✅ Trade placed! Contract ID: {result['trade']['contract_id']}")
-                response_received.set()
-                DerivService._close_ws_safely(ws)
-            
-            elif data.get('error'):
-                result["error"] = data['error']['message']
-                print(f"❌ Error: {result['error']}")
-                response_received.set()
-                DerivService._close_ws_safely(ws)
-        
-        def on_error(ws, error):
-            result["error"] = str(error)
-            response_received.set()
-        
-        def on_open(ws):
-            ws.send(json.dumps({"authorize": api_token}))
-        
-        ws_url = DerivService._get_ws_url()
-        ws = websocket.WebSocketApp(ws_url, on_open=on_open, on_message=on_message, on_error=on_error)
-        
-        wst = threading.Thread(target=ws.run_forever)
-        wst.daemon = True
-        wst.start()
-        
-        response_received.wait(timeout=30)
-        
-        if result["success"]:
-            return True, result["trade"]
-        else:
-            return False, result["error"] or "Failed to place trade"
-    
-    # ==================== ACTIVE CONTRACTS ====================
-    
-    @staticmethod
-    def get_active_contracts(api_token):
-        """Get all active contracts for the account - uses authorized account directly"""
-        result = {"success": False, "contracts": [], "error": None}
-        response_received = threading.Event()
-        
-        def on_message(ws, message):
-            data = json.loads(message)
-            print(f"📨 Active Contracts Response: {data}")
-            
-            if data.get('authorize'):
-                # After authorization, directly get portfolio (NO switch_account)
-                ws.send(json.dumps({"portfolio": 1}))
-            
-            elif data.get('portfolio'):
-                contracts = []
-                for contract in data['portfolio'].get('contracts', []):
-                    contracts.append({
-                        'contract_id': contract['contract_id'],
-                        'symbol': contract.get('symbol', ''),
-                        'buy_price': contract.get('buy_price', 0),
-                        'payout': contract.get('payout', 0),
-                        'expiry_time': contract.get('expiry_time'),
-                        'status': contract.get('status', 'open')
-                    })
-                result["success"] = True
-                result["contracts"] = contracts
-                response_received.set()
-                DerivService._close_ws_safely(ws)
-            
-            elif data.get('error'):
-                result["error"] = data['error']['message']
-                response_received.set()
-                DerivService._close_ws_safely(ws)
-        
-        def on_error(ws, error):
-            result["error"] = str(error)
-            response_received.set()
-        
-        def on_open(ws):
-            ws.send(json.dumps({"authorize": api_token}))
-        
-        ws_url = DerivService._get_ws_url()
-        ws = websocket.WebSocketApp(ws_url, on_open=on_open, on_message=on_message, on_error=on_error)
-        
-        wst = threading.Thread(target=ws.run_forever)
-        wst.daemon = True
-        wst.start()
-        
-        response_received.wait(timeout=10)
-        
-        if result["success"]:
-            return True, result["contracts"]
-        else:
-            return False, result["error"] or "Failed to get active contracts"
-    
-    # ==================== TRADE HISTORY ====================
-    
-    @staticmethod
-    def get_trade_history(api_token, limit=50):
-        """Get trade history from Deriv API - uses authorized account directly"""
-        result = {"success": False, "history": [], "error": None}
-        response_received = threading.Event()
-        
-        def on_message(ws, message):
-            data = json.loads(message)
-            print(f"📨 Trade History Response: {data}")
-            
-            if data.get('authorize'):
-                # After authorization, directly get profit_table (NO switch_account)
-                ws.send(json.dumps({"profit_table": 1, "limit": limit}))
-            
-            elif data.get('profit_table'):
-                transactions = []
-                for transaction in data['profit_table'].get('transactions', []):
-                    buy_price = transaction.get('buy_price', 0)
-                    sell_price = transaction.get('sell_price', 0)
-                    profit = sell_price - buy_price if sell_price and buy_price else transaction.get('profit_loss', 0)
-                    
-                    transactions.append({
-                        'contract_id': transaction.get('contract_id'),
-                        'transaction_id': transaction.get('transaction_id'),
-                        'action': transaction.get('action'),
-                        'amount': transaction.get('amount'),
-                        'balance_after': transaction.get('balance_after'),
-                        'buy_price': buy_price,
-                        'sell_price': sell_price,
-                        'profit': profit,
-                        'payout': transaction.get('payout'),
-                        'transaction_time': transaction.get('transaction_time'),
-                        'status': transaction.get('status'),
-                        'symbol': transaction.get('symbol'),
-                        'contract_type': transaction.get('contract_type'),
-                        'start_time': transaction.get('start_time'),
-                        'exit_time': transaction.get('exit_time')
-                    })
-                result["success"] = True
-                result["history"] = transactions
-                response_received.set()
-                DerivService._close_ws_safely(ws)
-            
-            elif data.get('error'):
-                result["error"] = data['error']['message']
-                response_received.set()
-                DerivService._close_ws_safely(ws)
-        
-        def on_error(ws, error):
-            result["error"] = str(error)
-            response_received.set()
-        
-        def on_open(ws):
-            ws.send(json.dumps({"authorize": api_token}))
-        
-        ws_url = DerivService._get_ws_url()
-        ws = websocket.WebSocketApp(ws_url, on_open=on_open, on_message=on_message, on_error=on_error)
-        
-        wst = threading.Thread(target=ws.run_forever)
-        wst.daemon = True
-        wst.start()
-        
-        response_received.wait(timeout=15)
-        
-        if result["success"]:
-            return True, result["history"]
-        else:
-            return False, result["error"] or "Failed to get trade history"
-    
-    # ==================== CONTRACT INFO ====================
-    
-    @staticmethod
-    def get_contract_info(api_token, contract_id):
-        """Get information about a specific contract - uses authorized account directly"""
-        result = {"success": False, "info": None, "error": None}
-        response_received = threading.Event()
-        
-        def on_message(ws, message):
-            data = json.loads(message)
-            print(f"📨 Contract Info Response: {data}")
-            
-            if data.get('authorize'):
-                # After authorization, directly get contract info (NO switch_account)
-                ws.send(json.dumps({"proposal_open_contract": contract_id}))
-            
-            elif data.get('proposal_open_contract'):
-                contract = data['proposal_open_contract']
-                result["success"] = True
-                result["info"] = {
-                    'contract_id': contract.get('contract_id'),
-                    'status': contract.get('status'),
-                    'buy_price': contract.get('buy_price'),
-                    'sell_price': contract.get('sell_price'),
-                    'profit': contract.get('profit', 0),
-                    'payout': contract.get('payout', 0),
-                    'expiry_time': contract.get('expiry_time'),
-                    'symbol': contract.get('underlying'),
-                    'transaction_ids': contract.get('transaction_ids', [])
-                }
-                response_received.set()
-                DerivService._close_ws_safely(ws)
-            
-            elif data.get('error'):
-                result["error"] = data['error']['message']
-                response_received.set()
-                DerivService._close_ws_safely(ws)
-        
-        def on_error(ws, error):
-            result["error"] = str(error)
-            response_received.set()
-        
-        def on_open(ws):
-            ws.send(json.dumps({"authorize": api_token}))
-        
-        ws_url = DerivService._get_ws_url()
-        ws = websocket.WebSocketApp(ws_url, on_open=on_open, on_message=on_message, on_error=on_error)
-        
-        wst = threading.Thread(target=ws.run_forever)
-        wst.daemon = True
-        wst.start()
-        
-        response_received.wait(timeout=30)
-        
-        if result["success"]:
-            return True, result["info"]
-        else:
-            return False, result["error"] or "Failed to get contract info"
-deriv_service = DerivService()        
+
+
+# ============================================
+# ✅ SINGLETON INSTANCE
+# ============================================
+
+deriv_service = DerivService()
