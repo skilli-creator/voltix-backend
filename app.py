@@ -12,7 +12,6 @@ from config import Config
 from routes.auth_routes import auth_bp
 from routes.deriv_routes import deriv_bp
 from routes.dbot_routes import bot_bp
-from routes.deriv_oauth_routes import deriv_oauth_bp
 
 # Services
 from services.websocket_service import websocket_service
@@ -95,7 +94,7 @@ EmailService.init_resend()
 # ============================================
 app.register_blueprint(auth_bp, url_prefix='/api/auth')
 app.register_blueprint(deriv_bp, url_prefix='/api/deriv')
-app.register_blueprint(deriv_oauth_bp, url_prefix='/api/deriv/oauth')
+# ❌ REMOVED: deriv_oauth_bp - No longer needed (using manual API token only)
 app.register_blueprint(bot_bp, url_prefix='/api/bot')
 
 
