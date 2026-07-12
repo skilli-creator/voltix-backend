@@ -7,8 +7,8 @@ import base64
 import logging
 from datetime import datetime
 from cryptography.fernet import Fernet
+from flask_socketio import SocketIO, emit, join_room, leave_room
 from models.database import db
-
 
 # ============================================
 # LOGGING
@@ -53,10 +53,11 @@ class DerivConnection:
     Each user has their own persistent connection
     """
     
-    def __init__(self, user_id, token, config):
+    def __init__(self, user_id, token, config, socketio=None):
         self.user_id = user_id
         self.token = token  # Decrypted token
-        self.config = config  # ✅ Flask config passed in
+        self.config = config  # Flask config
+        self.socketio = socketio  # Socket.IO instance for emitting to frontend
         
         # State
         self.ws = None
@@ -64,7 +65,7 @@ class DerivConnection:
         self.connecting = False
         self.should_run = False
         
-        # ✅ Thread safety lock
+        # Thread safety lock
         self._state_lock = threading.Lock()
         
         # Subscriptions
@@ -96,7 +97,7 @@ class DerivConnection:
         self.last_message = None
         self.last_pong = None
         
-        # ✅ Heartbeat
+        # Heartbeat
         self._heartbeat_thread = None
     
     def get_ws_url(self):
@@ -119,10 +120,7 @@ class DerivConnection:
             try:
                 data = json.loads(message)
                 self.last_message = datetime.utcnow()
-                
-                # ✅ Route to appropriate handler
                 self._route_message(data)
-                
             except Exception as e:
                 logger.error(f"WebSocket message error for user {self.user_id}: {e}")
         
@@ -137,7 +135,7 @@ class DerivConnection:
                 self.connected = False
                 self.connecting = False
             
-            # ✅ Auto-reconnect with exponential backoff
+            # Auto-reconnect with exponential backoff
             if self.should_run and self._reconnect_count < self._max_reconnects:
                 self._reconnect_count += 1
                 wait_time = min(2 ** self._reconnect_count, 30)
@@ -157,10 +155,10 @@ class DerivConnection:
             # Send authorize
             self.send_authorize()
             
-            # ✅ Start heartbeat
+            # Start heartbeat
             self._start_heartbeat()
             
-            # ✅ Resubscribe to all symbols
+            # Resubscribe to all symbols
             self._resubscribe_all()
         
         ws_url = self.get_ws_url()
@@ -189,7 +187,7 @@ class DerivConnection:
                 time.sleep(1)
     
     def _route_message(self, data):
-        """✅ Route incoming message to appropriate handler"""
+        """Route incoming message to appropriate handler"""
         # 1. Check for request/response match
         req_id = data.get('req_id')
         if req_id and req_id in self._pending_requests:
@@ -212,7 +210,7 @@ class DerivConnection:
             self._handle_error(data)
             return
         
-        # 5. ✅ Check for tick messages (subscription)
+        # 5. Check for tick messages (subscription)
         if data.get('msg_type') == 'tick':
             symbol = data.get('tick', {}).get('symbol')
             if symbol and symbol in self.subscriptions:
@@ -222,7 +220,7 @@ class DerivConnection:
                     logger.error(f"Subscription handler error for {symbol}: {e}")
             return
         
-        # 6. ✅ Check for generic message handlers
+        # 6. Check for generic message handlers
         msg_type = data.get('msg_type')
         if msg_type and msg_type in self.message_handlers:
             try:
@@ -238,16 +236,37 @@ class DerivConnection:
         self.balance = auth_data.get('balance', 0)
         logger.info(f"✅ User {self.user_id} authorized: {self.account_id}")
         self.event.set()
+        
+        # ✅ Emit to frontend via Socket.IO
+        if self.socketio:
+            self.socketio.emit('deriv_authorized', {
+                'account_id': self.account_id,
+                'currency': self.currency,
+                'balance': self.balance
+            }, room=f'user_{self.user_id}')
     
     def _handle_balance(self, data):
         """Handle balance response"""
         balance_data = data.get('balance', {})
         self.balance = balance_data.get('balance', 0)
+        
+        # ✅ Emit balance update to frontend
+        if self.socketio:
+            self.socketio.emit('deriv_balance_update', {
+                'balance': self.balance,
+                'currency': self.currency
+            }, room=f'user_{self.user_id}')
     
     def _handle_error(self, data):
         """Handle error response"""
         error_msg = data.get('error', {}).get('message', 'Unknown error')
         logger.warning(f"Deriv error for user {self.user_id}: {error_msg}")
+        
+        # ✅ Emit error to frontend
+        if self.socketio:
+            self.socketio.emit('deriv_error', {
+                'error': error_msg
+            }, room=f'user_{self.user_id}')
     
     def send_authorize(self):
         """Send authorization request"""
@@ -277,12 +296,7 @@ class DerivConnection:
             return self.connected and self.ws is not None
     
     def send_request(self, payload, timeout=10):
-        """
-        Send request and wait for response
-        
-        Returns:
-            dict: Response data or None on timeout
-        """
+        """Send request and wait for response"""
         with self._request_lock:
             self._request_counter += 1
             req_id = str(self._request_counter)
@@ -305,7 +319,6 @@ class DerivConnection:
             return None
             
         finally:
-            # ✅ Cleanup always happens
             with self._request_lock:
                 self._pending_requests.pop(req_id, None)
     
@@ -329,7 +342,7 @@ class DerivConnection:
             return self.connected and self.ws is not None
     
     def subscribe(self, symbol, callback):
-        """✅ Subscribe to price updates for a symbol"""
+        """Subscribe to price updates for a symbol"""
         with self._state_lock:
             self.subscriptions[symbol] = callback
         
@@ -344,7 +357,7 @@ class DerivConnection:
         return self.send(payload)
     
     def unsubscribe(self, symbol):
-        """✅ Unsubscribe from a symbol"""
+        """Unsubscribe from a symbol"""
         with self._state_lock:
             if symbol in self.subscriptions:
                 del self.subscriptions[symbol]
@@ -358,7 +371,7 @@ class DerivConnection:
         return self.send(payload)
     
     def _resubscribe_all(self):
-        """✅ Resubscribe to all symbols after reconnect"""
+        """Resubscribe to all symbols after reconnect"""
         symbols = list(self.subscriptions.keys())
         for symbol in symbols:
             callback = self.subscriptions[symbol]
@@ -366,7 +379,7 @@ class DerivConnection:
             self.subscribe(symbol, callback)
     
     def _start_heartbeat(self):
-        """✅ Start heartbeat thread"""
+        """Start heartbeat thread"""
         def ping():
             while self.should_run:
                 try:
@@ -395,7 +408,6 @@ class DerivConnection:
                 pass
             self.ws = None
         
-        # Cleanup subscriptions
         with self._state_lock:
             self.subscriptions.clear()
     
@@ -407,43 +419,90 @@ class DerivConnection:
 
 
 # ============================================
-# CONNECTION MANAGER
+# CONNECTION MANAGER WITH SOCKET.IO
 # ============================================
 class DerivConnectionManager:
-    """Manages all user connections"""
+    """Manages all user connections with Socket.IO support"""
     
     _instance = None
     _connections = {}
     _lock = threading.Lock()
+    _socketio = None
     
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
     
+    def init_socketio(self, socketio):
+        """Initialize Socket.IO instance"""
+        self._socketio = socketio
+        
+        # ✅ Register Socket.IO handlers
+        @socketio.on('connect')
+        def handle_connect():
+            logger.info('✅ Client connected to Socket.IO')
+            emit('connected', {'status': 'ok'})
+        
+        @socketio.on('disconnect')
+        def handle_disconnect():
+            logger.info('❌ Client disconnected from Socket.IO')
+        
+        @socketio.on('join')
+        def handle_join(data):
+            user_id = data.get('user_id')
+            if user_id:
+                join_room(f'user_{user_id}')
+                emit('joined', {'room': f'user_{user_id}'})
+                logger.info(f"User {user_id} joined room")
+        
+        @socketio.on('leave')
+        def handle_leave(data):
+            user_id = data.get('user_id')
+            if user_id:
+                leave_room(f'user_{user_id}')
+                emit('left', {'room': f'user_{user_id}'})
+        
+        @socketio.on('deriv_subscribe')
+        def handle_subscribe(data):
+            user_id = data.get('user_id')
+            symbol = data.get('symbol')
+            if user_id and symbol:
+                conn = self.get_connection(user_id)
+                if conn and conn.is_connected():
+                    conn.subscribe(symbol, lambda data: self._emit_tick(user_id, symbol, data))
+                    emit('subscribed', {'symbol': symbol})
+    
+    def _emit_tick(self, user_id, symbol, data):
+        """Emit tick data to frontend"""
+        if self._socketio:
+            self._socketio.emit('deriv_tick', {
+                'symbol': symbol,
+                'data': data
+            }, room=f'user_{user_id}')
+    
     def get_connection(self, user_id, config=None):
         """Get or create connection for user"""
         with self._lock:
             if user_id not in self._connections:
                 # Try to get token from database
-                account = DerivAccount.query.filter_by(user_id=user_id, is_connected=True).first()
+                account = db.get_deriv_token(user_id)
                 if not account:
                     logger.warning(f"No Deriv account found for user {user_id}")
                     return None
                 
                 # Decrypt token
-                token = decrypt_token(account.api_token)
+                token = decrypt_token(account.get('api_token'))
                 if not token:
                     logger.error(f"Failed to decrypt token for user {user_id}")
                     return None
                 
-                # ✅ Pass config to connection
                 if config is None:
                     from flask import current_app
                     config = current_app.config
                 
-                # Create new connection
-                conn = DerivConnection(user_id, token, config)
+                # Create new connection with Socket.IO
+                conn = DerivConnection(user_id, token, config, self._socketio)
                 self._connections[user_id] = conn
                 conn.connect()
                 return conn
@@ -488,6 +547,11 @@ class DerivConnectionManager:
                 'subscriptions': list(conn.subscriptions.keys())
             }
     
+    def emit_to_user(self, user_id, event, data):
+        """Emit event to a specific user"""
+        if self._socketio:
+            self._socketio.emit(event, data, room=f'user_{user_id}')
+    
     def cleanup_all(self):
         """Cleanup all connections on shutdown"""
         logger.info("🧹 Cleaning up all connections...")
@@ -503,55 +567,32 @@ connection_manager = DerivConnectionManager()
 
 
 # ============================================
-# ACCOUNT MANAGEMENT (Using Persistent Connections)
+# ACCOUNT MANAGEMENT
 # ============================================
 def connect_deriv_account(user_id, api_token):
-    """
-    Connect a Deriv account for a user
-    
-    Returns:
-        {
-            'success': bool,
-            'message': str,
-            'data': dict
-        }
-    """
+    """Connect a Deriv account for a user"""
     try:
-        # 1. Validate token (temporary connection)
+        # 1. Validate token
         validation = validate_deriv_token(api_token)
         
         if not validation.get('success'):
             error_msg = validation.get('error', 'Invalid Deriv token')
             raise Exception(error_msg)
         
-        # 2. Encrypt token for storage
+        # 2. Encrypt token
         encrypted_token = encrypt_token(api_token)
         
-        # 3. Check if user already has a Deriv account
-        existing = DerivAccount.query.filter_by(user_id=user_id).first()
+        # 3. Save to database
+        success = db.save_deriv_token(
+            user_id=user_id,
+            encrypted_token=encrypted_token,
+            account_id=validation.get('account_id'),
+            currency=validation.get('currency', 'USD'),
+            balance=validation.get('balance', 0)
+        )
         
-        if existing:
-            existing.api_token = encrypted_token
-            existing.account_id = validation.get('account_id')
-            existing.currency = validation.get('currency', 'USD')
-            existing.balance = validation.get('balance', 0)
-            existing.is_connected = True
-            existing.last_active_at = datetime.utcnow()
-            db.session.commit()
-            deriv_account = existing
-        else:
-            deriv_account = DerivAccount(
-                user_id=user_id,
-                api_token=encrypted_token,
-                account_id=validation.get('account_id'),
-                currency=validation.get('currency', 'USD'),
-                balance=validation.get('balance', 0),
-                is_connected=True,
-                connection_date=datetime.utcnow(),
-                last_active_at=datetime.utcnow()
-            )
-            db.session.add(deriv_account)
-            db.session.commit()
+        if not success:
+            raise Exception("Failed to save Deriv token to database")
         
         # 4. Create persistent connection
         from flask import current_app
@@ -561,18 +602,27 @@ def connect_deriv_account(user_id, api_token):
         if not conn:
             raise Exception("Failed to establish connection")
         
-        # Wait for connection to be ready
         if not conn.event.wait(10):
             raise Exception("Connection timeout")
+        
+        # 5. Emit success to frontend
+        connection_manager.emit_to_user(user_id, 'deriv_connected', {
+            'success': True,
+            'message': 'Deriv account connected successfully',
+            'account_id': validation.get('account_id')
+        })
         
         return {
             'success': True,
             'message': 'Deriv account connected successfully',
-            'data': deriv_account.to_dict()
+            'data': {
+                'account_id': validation.get('account_id'),
+                'currency': validation.get('currency', 'USD'),
+                'balance': validation.get('balance', 0)
+            }
         }
         
     except Exception as e:
-        db.session.rollback()
         logger.error(f"Connect error for user {user_id}: {e}")
         raise e
 
@@ -580,18 +630,20 @@ def connect_deriv_account(user_id, api_token):
 def disconnect_deriv_account(user_id):
     """Disconnect a Deriv account"""
     try:
-        account = DerivAccount.query.filter_by(user_id=user_id).first()
-        
-        if not account:
-            raise Exception('No Deriv account found')
-        
-        # Remove persistent connection
+        # Remove connection
         connection_manager.remove_connection(user_id)
         
-        # Update account status
-        account.is_connected = False
-        account.last_active_at = datetime.utcnow()
-        db.session.commit()
+        # Update database
+        success = db.disconnect_deriv(user_id)
+        
+        if not success:
+            raise Exception("Failed to disconnect from database")
+        
+        # Emit to frontend
+        connection_manager.emit_to_user(user_id, 'deriv_disconnected', {
+            'success': True,
+            'message': 'Deriv account disconnected successfully'
+        })
         
         return {
             'success': True,
@@ -599,16 +651,16 @@ def disconnect_deriv_account(user_id):
         }
         
     except Exception as e:
-        db.session.rollback()
+        logger.error(f"Disconnect error for user {user_id}: {e}")
         raise e
 
 
 def get_deriv_account_status(user_id):
     """Get Deriv account status"""
     try:
-        account = DerivAccount.query.filter_by(user_id=user_id).first()
+        status = db.get_deriv_account_status(user_id)
         
-        if not account:
+        if not status:
             return {
                 'success': True,
                 'data': {'isConnected': False}
@@ -617,27 +669,27 @@ def get_deriv_account_status(user_id):
         # Check if connection is active
         conn = connection_manager.get_connection(user_id)
         if conn and conn.is_connected():
-            account.is_connected = True
+            status['isConnected'] = True
         
         return {
             'success': True,
-            'data': account.to_dict()
+            'data': status
         }
         
     except Exception as e:
+        logger.error(f"Status error for user {user_id}: {e}")
         raise e
 
 
 def get_deriv_balance(user_id):
-    """Get Deriv account balance (using persistent connection)"""
+    """Get Deriv account balance"""
     try:
         from flask import current_app
         
-        # Get or create connection
         conn = connection_manager.get_connection(user_id, current_app.config)
         
         if not conn or not conn.is_connected():
-            account = DerivAccount.query.filter_by(user_id=user_id, is_connected=True).first()
+            account = db.get_deriv_token(user_id)
             if not account:
                 raise Exception('Deriv account not connected')
             
@@ -645,15 +697,10 @@ def get_deriv_balance(user_id):
             if not conn or not conn.event.wait(10):
                 raise Exception('Failed to establish connection')
         
-        # Get balance from persistent connection
         balance = conn.get_balance()
         
         # Update database
-        account = DerivAccount.query.filter_by(user_id=user_id).first()
-        if account:
-            account.balance = balance
-            account.last_active_at = datetime.utcnow()
-            db.session.commit()
+        db.update_deriv_balance(user_id, balance)
         
         return {
             'success': True,
@@ -661,14 +708,12 @@ def get_deriv_balance(user_id):
         }
         
     except Exception as e:
+        logger.error(f"Balance error for user {user_id}: {e}")
         raise e
 
 
 def validate_deriv_token(token):
-    """
-    Validate Deriv API token (using temporary connection)
-    Used only for initial validation
-    """
+    """Validate Deriv API token using temporary connection"""
     result = {
         'success': False,
         'account_id': None,
@@ -750,7 +795,7 @@ def validate_deriv_token(token):
 def get_account_info(user_id):
     """Get full account info from database"""
     try:
-        account = DerivAccount.query.filter_by(user_id=user_id).first()
+        account = db.get_deriv_token(user_id)
         if not account:
             return {
                 'success': False,
@@ -760,21 +805,22 @@ def get_account_info(user_id):
         # Update connection status
         conn = connection_manager.get_connection(user_id)
         if conn and conn.is_connected():
-            account.is_connected = True
+            account['is_connected'] = True
         
         return {
             'success': True,
-            'data': account.to_dict()
+            'data': account
         }
         
     except Exception as e:
+        logger.error(f"Account info error for user {user_id}: {e}")
         raise e
 
 
 def is_deriv_connected(user_id):
     """Check if user has an active Deriv connection"""
     try:
-        account = DerivAccount.query.filter_by(user_id=user_id, is_connected=True).first()
+        account = db.get_deriv_token(user_id)
         if not account:
             return False
         
@@ -812,9 +858,16 @@ def unsubscribe_from_symbol(user_id, symbol):
     return conn.unsubscribe(symbol)
 
 
-# ============================================
-# CLEANUP ON SHUTDOWN
-# ============================================
+def init_socketio(socketio):
+    """Initialize Socket.IO with connection manager"""
+    connection_manager.init_socketio(socketio)
+    return socketio
+
+
 def cleanup_all_connections():
     """Cleanup all connections on shutdown"""
     connection_manager.cleanup_all()
+
+
+# ✅ Export the service
+deriv_service = connection_manager
