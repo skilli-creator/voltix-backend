@@ -1,5 +1,4 @@
 # backend/models/database.py
-
 import os
 import re
 import mysql.connector
@@ -32,17 +31,19 @@ class Database:
                         database=match.group(5),
                         port=int(match.group(4)),
                         consume_results=True,
-                        autocommit=False
+                        autocommit=False,
+                        ssl_disabled=False
                     )
                     return self.connection
             
-            # Fallback to individual variables (local development)
+            # Fallback to individual variables
             print(f"🔗 Connecting to local database...")
             self.connection = mysql.connector.connect(
                 host=Config.DB_HOST,
                 user=Config.DB_USER,
                 password=Config.DB_PASSWORD,
                 database=Config.DB_NAME,
+                port=Config.DB_PORT,
                 consume_results=True,
                 autocommit=False
             )
@@ -69,7 +70,7 @@ class Database:
             return False
     
     def ensure_tables(self):
-        """✅ Create required tables if they don't exist"""
+        """Create required tables if they don't exist"""
         conn = self.get_connection()
         if not conn:
             return False
@@ -77,7 +78,30 @@ class Database:
         cursor = conn.cursor()
         
         try:
-            # Create deriv_accounts table if not exists
+            # Create users table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    first_name VARCHAR(100) NOT NULL,
+                    last_name VARCHAR(100) NOT NULL,
+                    phone VARCHAR(20) NOT NULL UNIQUE,
+                    email VARCHAR(255) NOT NULL UNIQUE,
+                    password_hash VARCHAR(255) NOT NULL,
+                    email_verified BOOLEAN DEFAULT FALSE,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    verification_code VARCHAR(10),
+                    code_expires_at DATETIME,
+                    reset_code VARCHAR(10),
+                    reset_code_expires_at DATETIME,
+                    last_login DATETIME,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_email (email),
+                    INDEX idx_phone (phone)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            
+            # Create deriv_accounts table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS deriv_accounts (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -92,7 +116,8 @@ class Database:
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                     INDEX idx_user_id (user_id),
-                    UNIQUE KEY unique_user (user_id)
+                    UNIQUE KEY unique_user (user_id),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
             
@@ -275,14 +300,12 @@ class Database:
             conn.close()
     
     # ============================================
-    # ✅ DERIV ACCOUNT FUNCTIONS (Manual API Token)
+    # DERIV ACCOUNT FUNCTIONS
     # ============================================
     
     def save_deriv_token(self, user_id, encrypted_token, account_id=None, 
                          currency='USD', balance=0):
-        """
-        ✅ Save or update Deriv API token for a user
-        """
+        """Save or update Deriv API token for a user"""
         conn = self.get_connection()
         if not conn:
             return False
@@ -290,13 +313,11 @@ class Database:
         cursor = conn.cursor()
         
         try:
-            # Check if account exists for user
             cursor.execute("SELECT id FROM deriv_accounts WHERE user_id = %s", (user_id,))
             existing = cursor.fetchone()
             cursor.fetchall()
             
             if existing:
-                # Update existing
                 cursor.execute("""
                     UPDATE deriv_accounts 
                     SET api_token = %s, 
@@ -308,7 +329,6 @@ class Database:
                     WHERE user_id = %s
                 """, (encrypted_token, account_id, balance, currency, user_id))
             else:
-                # Insert new
                 cursor.execute("""
                     INSERT INTO deriv_accounts 
                     (user_id, api_token, account_id, balance, currency, is_connected, connection_date, last_active_at)
@@ -327,9 +347,7 @@ class Database:
             conn.close()
     
     def get_deriv_token(self, user_id):
-        """
-        ✅ Get Deriv token for a user
-        """
+        """Get Deriv token for a user"""
         conn = self.get_connection()
         if not conn:
             return None
@@ -354,9 +372,7 @@ class Database:
             conn.close()
     
     def update_deriv_balance(self, user_id, balance):
-        """
-        ✅ Update user's Deriv account balance
-        """
+        """Update user's Deriv account balance"""
         conn = self.get_connection()
         if not conn:
             return False
@@ -381,9 +397,7 @@ class Database:
             conn.close()
     
     def disconnect_deriv(self, user_id):
-        """
-        ✅ Disconnect Deriv account
-        """
+        """Disconnect Deriv account"""
         conn = self.get_connection()
         if not conn:
             return False
@@ -408,9 +422,7 @@ class Database:
             conn.close()
     
     def get_deriv_account_status(self, user_id):
-        """
-        ✅ Get Deriv account status
-        """
+        """Get Deriv account status"""
         conn = self.get_connection()
         if not conn:
             return None
@@ -441,13 +453,11 @@ class Database:
             conn.close()
     
     def deactivate_deriv_token(self, user_id):
-        """
-        ✅ Deactivate Deriv token (legacy - use disconnect_deriv)
-        """
+        """Deactivate Deriv token (legacy)"""
         return self.disconnect_deriv(user_id)
 
 # Create single instance
 db = Database()
 
-# ✅ Ensure tables exist on import
+# Ensure tables exist on import
 db.ensure_tables()

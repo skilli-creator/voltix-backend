@@ -1,5 +1,4 @@
 # backend/app.py
-
 import socket
 import os
 import time
@@ -14,7 +13,7 @@ from routes.auth_routes import auth_bp
 from routes.deriv_routes import deriv_bp
 
 # Services
-from services.websocket_service import websocket_service
+from services.deriv_service import init_socketio, cleanup_all_connections
 from services.email_service import EmailService
 
 # ============================================
@@ -23,11 +22,10 @@ from services.email_service import EmailService
 env = os.getenv('ENVIRONMENT', 'development')
 app_config = config.get(env, config['default'])
 
-# ✅ Validate config at startup
 Config.validate()
 
 # ============================================
-# LOGGING - ✅ FIXED: Convert string to int constant
+# LOGGING
 # ============================================
 log_level = getattr(logging, app_config.LOG_LEVEL.upper(), logging.INFO)
 
@@ -38,7 +36,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ============================================
-# DNS TEST - Only in DEBUG mode
+# DNS TEST
 # ============================================
 def test_dns():
     print("\n" + "="*50)
@@ -63,7 +61,6 @@ def test_dns():
 # ============================================
 app = Flask(__name__)
 
-# Only run DNS test in debug mode
 if app_config.DEBUG:
     test_dns()
 
@@ -74,21 +71,11 @@ app.config['SECRET_KEY'] = app_config.SECRET_KEY
 app.config['JWT_SECRET_KEY'] = app_config.JWT_SECRET_KEY
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = app_config.JWT_ACCESS_TOKEN_EXPIRES
 
-# ✅ Session config - Secure only in production
 app.config['SESSION_TYPE'] = 'filesystem'
 app.config['SESSION_COOKIE_SECURE'] = not app_config.DEBUG
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = "None" if not app_config.DEBUG else "Lax"
 app.config['PERMANENT_SESSION_LIFETIME'] = 600
-
-# ============================================
-# DATABASE
-# ============================================
-from models.database import db
-app.config['SQLALCHEMY_DATABASE_URI'] = app_config.SQLALCHEMY_DATABASE_URI
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = app_config.SQLALCHEMY_TRACK_MODIFICATIONS
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = app_config.SQLALCHEMY_ENGINE_OPTIONS
-db.init_app(app)
 
 # ============================================
 # CORS CONFIG
@@ -139,14 +126,14 @@ def add_security_headers(response):
     return response
 
 # ============================================
-# ✅ REQUEST LOGGING (pro-level)
+# REQUEST LOGGING
 # ============================================
 @app.before_request
 def log_request():
     logger.info(f"{request.method} {request.path}")
 
 # ============================================
-# INITIALIZE RESEND EMAIL - Safe with try/except
+# INITIALIZE RESEND EMAIL
 # ============================================
 try:
     EmailService.init_resend()
@@ -160,7 +147,6 @@ except Exception as e:
 app.register_blueprint(auth_bp, url_prefix='/api/auth')
 app.register_blueprint(deriv_bp, url_prefix='/api/deriv')
 
-# Check if bot_bp exists before registering
 try:
     from routes.bot_routes import bot_bp
     app.register_blueprint(bot_bp, url_prefix='/api/bot')
@@ -170,14 +156,10 @@ except ImportError:
 # ============================================
 # SOCKET.IO
 # ============================================
-socketio = websocket_service.init_app(app)
+from flask_socketio import SocketIO
 
-# Pass socketio to handlers
-try:
-    from routes.deriv_routes import register_socket_handlers
-    register_socket_handlers(socketio)
-except ImportError:
-    logger.warning("⚠️ register_socket_handlers not found, skipping")
+socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins='*')
+init_socketio(socketio)
 
 # ============================================
 # HEALTH ROUTES
@@ -194,21 +176,11 @@ def home():
 
 @app.route('/health')
 def health():
-    connected_clients = len(websocket_service.connected_clients) if hasattr(websocket_service, 'connected_clients') else 0
-    
-    try:
-        market_data = websocket_service.get_all_market_data() if hasattr(websocket_service, 'get_all_market_data') else {}
-        active_markets = len(market_data)
-    except Exception as e:
-        logger.warning(f"Market data fetch error: {e}")
-        active_markets = 0
-    
     return jsonify({
         'status': 'healthy',
         'timestamp': int(time.time() * 1000),
-        'connected_clients': connected_clients,
-        'active_markets': active_markets,
-        'environment': app_config.ENVIRONMENT
+        'environment': app_config.ENVIRONMENT,
+        'deriv_app_id': app_config.DERIV_APP_ID
     })
 
 # ============================================
@@ -230,14 +202,14 @@ def internal_error(error):
     }), 500
 
 # ============================================
-# CREATE TABLES - Only in DEBUG
+# SHUTDOWN HANDLER
 # ============================================
-if app_config.DEBUG:
-    with app.app_context():
-        db.create_all()
-        logger.info('✅ Database tables created/verified (development)')
-else:
-    logger.info('✅ Production mode - using existing tables')
+import atexit
+
+@atexit.register
+def shutdown():
+    logger.info("🧹 Cleaning up connections on shutdown...")
+    cleanup_all_connections()
 
 # ============================================
 # RUN SERVER
@@ -259,6 +231,5 @@ if __name__ == '__main__':
         host='0.0.0.0',
         port=port,
         debug=app_config.DEBUG,
-        # ✅ allow_unsafe_werkzeug only in development
         allow_unsafe_werkzeug=app_config.DEBUG
     )

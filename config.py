@@ -12,7 +12,6 @@ class Config:
     SECRET_KEY = os.getenv('SECRET_KEY')
     JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY')
     
-    # ✅ Early validation for critical secrets
     if not SECRET_KEY:
         raise ValueError("❌ SECRET_KEY must be set in .env")
     if not JWT_SECRET_KEY:
@@ -21,39 +20,27 @@ class Config:
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(days=7)
     
     # ============================================
-    # DATABASE
+    # DATABASE - MySQL
     # ============================================
-    DATABASE_URL = os.getenv('DATABASE_URL')
+    DB_HOST = os.getenv('DB_HOST', 'localhost')
+    DB_USER = os.getenv('DB_USER', 'root')
+    DB_PASSWORD = os.getenv('DB_PASSWORD', '')
+    DB_NAME = os.getenv('DB_NAME', 'voltix')
+    DB_PORT = int(os.getenv('DB_PORT', 3306))
     
-    if not DATABASE_URL:
-        raise ValueError("❌ DATABASE_URL must be set in .env")
-    
-    SQLALCHEMY_DATABASE_URI = DATABASE_URL
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
-    
-    # SSL for Clever Cloud
-    SQLALCHEMY_ENGINE_OPTIONS = {
-        'pool_size': 10,
-        'pool_recycle': 3600,
-        'pool_pre_ping': True,
-        'connect_args': {
-            "ssl": {}
-        }
-    }
+    # Build DATABASE_URL for compatibility
+    DATABASE_URL = os.getenv('DATABASE_URL', f"mysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}")
     
     # ============================================
-    # DERIV - MANUAL API TOKEN ONLY (No OAuth)
+    # DERIV - MANUAL API TOKEN ONLY
     # ============================================
-    # ✅ Smart fallback: if non-numeric, use default
     raw_app_id = os.getenv('DERIV_APP_ID')
     if raw_app_id and raw_app_id.isdigit():
         DERIV_APP_ID = raw_app_id
     else:
-        DERIV_APP_ID = '1089'  # Safe fallback
+        DERIV_APP_ID = '1089'
     
     DERIV_WS_URL = f"wss://ws.derivws.com/websockets/v3?app_id={DERIV_APP_ID}"
-    
-    # ❌ REMOVED: DERIV_REDIRECT_URI - Not needed for manual API token
     
     # ============================================
     # ENCRYPTION
@@ -72,7 +59,7 @@ class Config:
         raise ValueError("❌ FRONTEND_URL must be set in .env")
     
     # ============================================
-    # CORS - ✅ Safe parsing
+    # CORS
     # ============================================
     CORS_ORIGINS = [
         origin.strip() 
@@ -94,16 +81,12 @@ class Config:
     DEBUG = ENVIRONMENT == 'development'
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
     
-    # ============================================
-    # VALIDATION - ✅ Only required variables
-    # ============================================
     @staticmethod
     def validate():
         """Validate all required environment variables"""
         required = [
             "SECRET_KEY",
             "JWT_SECRET_KEY",
-            "DATABASE_URL",
             "ENCRYPTION_KEY",
             "FRONTEND_URL"
         ]
@@ -123,7 +106,6 @@ class Config:
                 f"{'='*60}\n"
             )
         
-        # ✅ Check DERIV_APP_ID warning (clean)
         app_id = os.getenv('DERIV_APP_ID')
         if app_id and not app_id.isdigit():
             print(
@@ -133,26 +115,8 @@ class Config:
                 f"  Current value: {app_id}\n"
                 f"  Using fallback: 1089\n"
                 f"  For WebSocket connections, Deriv requires a numeric app_id.\n"
-                f"  If you have a numeric app_id, update your .env file.\n"
                 f"{'='*60}\n"
             )
-        
-        # ✅ Check encryption key format
-        encryption_key = os.getenv('ENCRYPTION_KEY')
-        if encryption_key:
-            try:
-                import base64
-                base64.urlsafe_b64decode(encryption_key)
-            except:
-                print(
-                    f"\n{'='*60}\n"
-                    f"⚠️  WARNING: ENCRYPTION_KEY format may be invalid\n"
-                    f"{'='*60}\n"
-                    f"  Your ENCRYPTION_KEY should be a valid base64 string.\n"
-                    f"  Generate one using:\n"
-                    f"  python -c \"import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())\"\n"
-                    f"{'='*60}\n"
-                )
         
         print("✅ All required environment variables are set")
 
