@@ -41,7 +41,6 @@ def decrypt_token(encrypted_token):
 # DERIV API - PAT + OTP FLOW
 # ============================================
 
-# ✅ CORRECT: REST API base URL (matches working tool)
 DERIV_API_URL = "https://api.derivws.com"
 DERIV_WS_URL = "wss://ws.derivws.com/websockets/v3"
 
@@ -65,7 +64,6 @@ def get_deriv_accounts(api_token):
         accounts = data.get('data', [])
         logger.info(f"✅ Found {len(accounts)} account(s)")
         
-        # Log account details
         for acc in accounts:
             logger.info(f"   - {acc.get('account_id')} ({acc.get('currency')}) balance: {acc.get('balance')} [{acc.get('status')}]")
         
@@ -122,7 +120,6 @@ def validate_deriv_token(api_token):
                 'error': 'Invalid API token or no accounts found'
             }
         
-        # Find active account
         active_account = None
         for acc in accounts:
             if acc.get('status') == 'active':
@@ -150,7 +147,7 @@ def validate_deriv_token(api_token):
         }
 
 # ============================================
-# DERIV CONNECTION - PAT + OTP FLOW
+# DERIV CONNECTION - WITH AUTHORIZATION STATE
 # ============================================
 class DerivConnection:
     def __init__(self, user_id, api_token, config, socketio=None):
@@ -166,6 +163,9 @@ class DerivConnection:
         self.should_run = False
         self._state_lock = threading.Lock()
         
+        # ✅ CRITICAL: Authorization state
+        self._authorized = False
+        
         # Account info
         self.account_id = None
         self.currency = 'USD'
@@ -174,7 +174,7 @@ class DerivConnection:
         self.connected_at = None
         self.last_message = None
         
-        # Callback system (req_id based)
+        # Callback system
         self._pending_requests = {}
         self._request_counter = 0
         self._request_lock = threading.Lock()
@@ -190,7 +190,7 @@ class DerivConnection:
         # Heartbeat
         self._heartbeat_thread = None
         
-        # Cleanup timer for stale requests
+        # Cleanup timer
         self._cleanup_timer = None
         self._start_request_cleanup()
     
@@ -219,6 +219,7 @@ class DerivConnection:
                 return
             self.connecting = True
             self.should_run = True
+            self._authorized = False  # ✅ Reset auth state on connect
         
         # Step 3: Get accounts
         logger.info(f"📡 Getting accounts for user {self.user_id}")
@@ -279,8 +280,8 @@ class DerivConnection:
             with self._state_lock:
                 self.connected = False
                 self.connecting = False
+                self._authorized = False  # ✅ Reset auth on close
             
-            # Auto-reconnect
             if self.should_run and self._reconnect_count < self._max_reconnects:
                 self._reconnect_count += 1
                 wait_time = min(2 ** self._reconnect_count, 30)
@@ -339,16 +340,25 @@ class DerivConnection:
         """Route incoming message to appropriate handler"""
         msg_type = data.get('msg_type')
         
-        # Step 6: Handle authorization response
+        # ✅ Step 6: Handle authorization response
         if msg_type == 'authorize':
             if 'error' in data:
                 error_msg = data['error'].get('message', 'Authorization failed')
-                logger.warning(f"⚠️ Authorization response: {error_msg}")
+                logger.error(f"❌ Authorization failed: {error_msg}")
+                with self._state_lock:
+                    self._authorized = False
+                
+                if self.socketio:
+                    self.socketio.emit('deriv_error', {
+                        'error': error_msg
+                    }, room=f'user_{self.user_id}')
             else:
                 logger.info(f"✅ Authorization successful")
-                # Step 7: Subscribe to balance after auth
+                with self._state_lock:
+                    self._authorized = True
+                
+                # ✅ Step 7: Subscribe ONLY after authorization
                 self._subscribe_balance()
-                # Step 7: Subscribe to transaction stream
                 self._subscribe_transactions()
                 
                 if self.socketio:
@@ -361,10 +371,13 @@ class DerivConnection:
         
         # Step 10: Handle request/response callbacks
         req_id = data.get('req_id')
-        if req_id and req_id in self._pending_requests:
-            logger.info(f"📨 Found callback for req_id: {req_id}")
-            self._pending_requests[req_id]['response'] = data
-            self._pending_requests[req_id]['event'].set()
+        if req_id:
+            if req_id in self._pending_requests:
+                logger.info(f"📨 Found callback for req_id: {req_id}")
+                self._pending_requests[req_id]['response'] = data
+                self._pending_requests[req_id]['event'].set()
+            else:
+                logger.warning(f"⚠️ No callback found for req_id: {req_id}")
             return
         
         # Step 10: Handle balance updates
@@ -382,8 +395,10 @@ class DerivConnection:
         balance_data = data.get('balance', {})
         new_balance = balance_data.get('balance', 0)
         
+        # ✅ Log even when unchanged (for debugging)
+        logger.info(f"💰 Balance: {self.balance} → {new_balance}")
+        
         if new_balance != self.balance:
-            logger.info(f"💰 Balance updated: {self.balance} → {new_balance}")
             self.balance = new_balance
             
             if self.socketio:
@@ -395,7 +410,7 @@ class DerivConnection:
     
     def _handle_error(self, data):
         error_msg = data.get('error', {}).get('message', 'Unknown error')
-        logger.warning(f"Deriv error: {error_msg}")
+        logger.warning(f"⚠️ Deriv error: {error_msg}")
         
         if self.socketio:
             self.socketio.emit('deriv_error', {
@@ -403,8 +418,9 @@ class DerivConnection:
             }, room=f'user_{self.user_id}')
     
     def _subscribe_balance(self):
-        """Step 7: Subscribe to balance updates"""
-        if not self._is_ws_ready():
+        """Step 7: Subscribe to balance updates (ONLY if authorized)"""
+        if not self._is_ready():
+            logger.warning(f"⚠️ Cannot subscribe to balance: not ready (connected={self.connected}, authorized={self._authorized})")
             return
         
         payload = {'balance': 1, 'subscribe': 1}
@@ -412,8 +428,9 @@ class DerivConnection:
         logger.info(f"📊 Subscribed to balance updates")
     
     def _subscribe_transactions(self):
-        """Step 7: Subscribe to transaction stream for instant settlement"""
-        if not self._is_ws_ready():
+        """Step 7: Subscribe to transaction stream (ONLY if authorized)"""
+        if not self._is_ready():
+            logger.warning(f"⚠️ Cannot subscribe to transactions: not ready")
             return
         
         payload = {
@@ -423,25 +440,39 @@ class DerivConnection:
         self.send(payload)
         logger.info(f"📊 Subscribed to transaction stream")
     
+    # ✅ CRITICAL: Check both connection AND authorization
+    def _is_ready(self):
+        """Check if WebSocket is connected AND authorized"""
+        with self._state_lock:
+            return self.connected and self.ws is not None and self._authorized
+    
+    def _is_ws_ready(self):
+        """Legacy: Check if WebSocket is connected (without auth)"""
+        with self._state_lock:
+            return self.connected and self.ws is not None
+    
     def send(self, payload):
         if not self._is_ws_ready():
-            raise Exception("WebSocket not connected")
+            logger.error(f"❌ Cannot send: WebSocket not connected")
+            return False
+        
+        if not self._authorized:
+            logger.warning(f"⚠️ Sending without authorization - may fail: {payload.get('msg_type', 'unknown')}")
         
         try:
             self.ws.send(json.dumps(payload))
             return True
         except Exception as e:
-            logger.error(f"Send error: {e}")
+            logger.error(f"❌ Send error: {e}")
             with self._state_lock:
                 self.connected = False
             return False
     
-    def _is_ws_ready(self):
-        with self._state_lock:
-            return self.connected and self.ws is not None
-    
     def send_request(self, payload, timeout=10):
         """Step 10: Send request with callback"""
+        if not self._is_ready():
+            raise Exception("WebSocket not connected or not authorized")
+        
         with self._request_lock:
             self._request_counter += 1
             req_id = str(self._request_counter)
@@ -463,6 +494,8 @@ class DerivConnection:
                 if response:
                     logger.info(f"✅ Request {req_id} completed")
                 return response
+            
+            logger.warning(f"⏰ Request {req_id} timed out")
             return None
             
         finally:
@@ -471,14 +504,17 @@ class DerivConnection:
     
     def get_balance(self):
         """Step 10: Get balance via request"""
-        if not self._is_ws_ready():
-            raise Exception("WebSocket not connected")
+        if not self._is_ready():
+            raise Exception("WebSocket not connected or not authorized")
         
+        logger.info(f"📊 Requesting balance via req_id")
         payload = {'balance': 1}
         response = self.send_request(payload, timeout=10)
         
         if response and 'balance' in response:
-            self.balance = response['balance'].get('balance', 0)
+            new_balance = response['balance'].get('balance', 0)
+            logger.info(f"💰 Balance request returned: {new_balance}")
+            self.balance = new_balance
             return self.balance
         
         return self.balance
@@ -486,6 +522,15 @@ class DerivConnection:
     def is_connected(self):
         with self._state_lock:
             return self.connected and self.ws is not None
+    
+    def is_authorized(self):
+        with self._state_lock:
+            return self._authorized
+    
+    def is_ready(self):
+        """Full readiness check: connected AND authorized"""
+        with self._state_lock:
+            return self.connected and self.ws is not None and self._authorized
     
     def _start_heartbeat(self):
         def ping():
@@ -506,6 +551,7 @@ class DerivConnection:
         with self._state_lock:
             self.connected = False
             self.connecting = False
+            self._authorized = False
         
         if self.ws:
             try:
@@ -598,6 +644,8 @@ class DerivConnectionManager:
             conn = self._connections[user_id]
             return {
                 'connected': conn.is_connected(),
+                'authorized': conn.is_authorized(),
+                'ready': conn.is_ready(),
                 'account_id': conn.account_id,
                 'currency': conn.currency,
                 'balance': conn.balance,
@@ -625,15 +673,12 @@ connection_manager = DerivConnectionManager()
 # ============================================
 
 def connect_deriv_account(user_id, api_token):
-    """Complete PAT + OTP connection flow"""
     try:
-        # Step 3: Validate token and get accounts
         validation = validate_deriv_token(api_token)
         
         if not validation.get('success'):
             raise Exception(validation.get('error', 'Invalid API token'))
         
-        # Encrypt and save token
         encrypted_token = encrypt_token(api_token)
         
         success = db.save_deriv_token(
@@ -647,7 +692,6 @@ def connect_deriv_account(user_id, api_token):
         if not success:
             raise Exception("Failed to save token")
         
-        # Step 6: Create WebSocket connection
         from flask import current_app
         connection_manager.remove_connection(user_id)
         conn = connection_manager.get_connection(user_id, current_app.config)
@@ -655,16 +699,19 @@ def connect_deriv_account(user_id, api_token):
         if not conn:
             raise Exception("Failed to establish connection")
         
-        # Wait for connection
         if not conn.event.wait(10):
             raise Exception("Connection timeout")
+        
+        # Wait a moment for authorization
+        time.sleep(2)
         
         connection_manager.emit_to_user(user_id, 'deriv_connected', {
             'success': True,
             'account_id': conn.account_id,
             'currency': conn.currency,
             'balance': conn.balance,
-            'accounts': conn.accounts
+            'accounts': conn.accounts,
+            'authorized': conn.is_authorized()
         })
         
         return {
@@ -674,7 +721,8 @@ def connect_deriv_account(user_id, api_token):
                 'account_id': conn.account_id,
                 'currency': conn.currency,
                 'balance': conn.balance,
-                'accounts': conn.accounts
+                'accounts': conn.accounts,
+                'authorized': conn.is_authorized()
             }
         }
         
@@ -711,6 +759,8 @@ def get_deriv_account_status(user_id):
         conn = connection_manager.get_connection(user_id)
         if conn and conn.is_connected():
             status['isConnected'] = True
+            status['isAuthorized'] = conn.is_authorized()
+            status['isReady'] = conn.is_ready()
         
         return {'success': True, 'data': status}
         
@@ -726,6 +776,9 @@ def get_deriv_balance(user_id):
         
         if not conn or not conn.is_connected():
             raise Exception('Deriv account not connected')
+        
+        if not conn.is_authorized():
+            raise Exception('Deriv account not authorized')
         
         balance = conn.get_balance()
         db.update_deriv_balance(user_id, balance)
@@ -748,6 +801,8 @@ def get_account_info(user_id):
         conn = connection_manager.get_connection(user_id)
         if conn and conn.is_connected():
             account['isConnected'] = True
+            account['isAuthorized'] = conn.is_authorized()
+            account['isReady'] = conn.is_ready()
         
         return {'success': True, 'data': account}
         
