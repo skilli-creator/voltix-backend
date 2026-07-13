@@ -4,14 +4,19 @@ import threading
 import time
 import logging
 import requests
-from datetime import datetime
 from cryptography.fernet import Fernet
 from flask_socketio import join_room
 from models.database import db
+import urllib3
+
+# Disable SSL warnings (needed for IP workaround)
+urllib3.disable_warnings()
 
 logger = logging.getLogger(__name__)
 
-DERIV_API_URL = "https://api.deriv.com"
+# 🔴 Use direct IP to avoid Render DNS issues
+DERIV_API_IP = "https://165.227.79.199"
+DERIV_HOST = "api.deriv.com"
 
 
 # =============================
@@ -20,6 +25,8 @@ DERIV_API_URL = "https://api.deriv.com"
 def get_encryption_key():
     from flask import current_app
     key = current_app.config.get("ENCRYPTION_KEY")
+    if not key:
+        raise ValueError("ENCRYPTION_KEY missing")
     return key.encode() if isinstance(key, str) else key
 
 
@@ -32,48 +39,71 @@ def decrypt_token(token):
 
 
 # =============================
-# REST
+# REST (FIXED - uses IP + Host header)
 # =============================
 def get_deriv_accounts(token):
-    r = requests.get(
-        f"{DERIV_API_URL}/trading/v1/options/accounts",
-        headers={"Authorization": f"Bearer {token}"},
-        timeout=10
-    )
-    if r.status_code != 200:
+    try:
+        url = f"{DERIV_API_IP}/trading/v1/options/accounts"
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Host": DERIV_HOST
+        }
+
+        r = requests.get(url, headers=headers, timeout=10, verify=False)
+
+        if r.status_code != 200:
+            logger.error(f"Accounts fetch failed: {r.status_code} {r.text}")
+            return None
+
+        return r.json().get("data", [])
+
+    except Exception as e:
+        logger.error(f"get_deriv_accounts error: {e}")
         return None
-    return r.json().get("data", [])
 
 
 def request_otp(token, account_id):
-    r = requests.get(
-        f"{DERIV_API_URL}/trading/v1/options/accounts/{account_id}/otp",
-        headers={"Authorization": f"Bearer {token}"},
-        timeout=10
-    )
-    if r.status_code != 200:
+    try:
+        url = f"{DERIV_API_IP}/trading/v1/options/accounts/{account_id}/otp"
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Host": DERIV_HOST
+        }
+
+        r = requests.get(url, headers=headers, timeout=10, verify=False)
+
+        if r.status_code != 200:
+            logger.error(f"OTP request failed: {r.status_code} {r.text}")
+            return None
+
+        return r.json().get("data", {}).get("ws_url")
+
+    except Exception as e:
+        logger.error(f"request_otp error: {e}")
         return None
-    return r.json().get("data", {}).get("ws_url")
 
 
 def validate_deriv_token(token):
     accs = get_deriv_accounts(token)
-    if not accs:
-        return {"success": False, "error": "Invalid token"}
 
-    acc = next((a for a in accs if a["status"] == "active"), accs[0])
+    if not accs:
+        return {"success": False, "error": "Invalid token or network error"}
+
+    acc = next((a for a in accs if a.get("status") == "active"), accs[0])
 
     return {
         "success": True,
-        "account_id": acc["account_id"],
-        "currency": acc["currency"],
-        "balance": float(acc["balance"]),
+        "account_id": acc.get("account_id"),
+        "currency": acc.get("currency", "USD"),
+        "balance": float(acc.get("balance", 0)),
         "accounts": accs
     }
 
 
 # =============================
-# CONNECTION
+# CONNECTION (OTP ONLY - NO AUTHORIZE)
 # =============================
 class DerivConnection:
     def __init__(self, user_id, token, socketio=None):
@@ -89,45 +119,55 @@ class DerivConnection:
         self.should_run = False
 
     def connect(self):
+        logger.info("Connecting to Deriv...")
+
         accounts = get_deriv_accounts(self.token)
         if not accounts:
+            logger.error("No accounts found")
             return
 
-        acc = next((a for a in accounts if a["status"] == "active"), accounts[0])
-        self.account_id = acc["account_id"]
-        self.currency = acc["currency"]
-        self.balance = float(acc["balance"])
+        acc = next((a for a in accounts if a.get("status") == "active"), accounts[0])
+        self.account_id = acc.get("account_id")
+        self.currency = acc.get("currency", "USD")
+        self.balance = float(acc.get("balance", 0))
 
         ws_url = request_otp(self.token, self.account_id)
         if not ws_url:
+            logger.error("Failed to get OTP")
             return
 
         self.should_run = True
 
         def on_open(ws):
             self.connected = True
-            logger.info("WS connected (OTP)")
+            logger.info("WS connected (OTP session)")
             self.subscribe()
 
         def on_message(ws, message):
-            data = json.loads(message)
+            try:
+                data = json.loads(message)
 
-            if "balance" in data:
-                new_balance = data["balance"]["balance"]
-                if new_balance != self.balance:
-                    self.balance = new_balance
-                    if self.socketio:
-                        self.socketio.emit(
-                            "deriv_balance_update",
-                            {"balance": self.balance},
-                            room=f"user_{self.user_id}"
-                        )
+                if "balance" in data:
+                    new_balance = data["balance"]["balance"]
+                    if new_balance != self.balance:
+                        self.balance = new_balance
+                        if self.socketio:
+                            self.socketio.emit(
+                                "deriv_balance_update",
+                                {"balance": self.balance},
+                                room=f"user_{self.user_id}"
+                            )
 
-            if "error" in data:
-                logger.warning(data["error"])
+                if "error" in data:
+                    logger.warning(f"WS error: {data['error']}")
+
+            except Exception as e:
+                logger.error(f"WS message error: {e}")
 
         def on_close(ws, *args):
             self.connected = False
+            logger.warning("WS closed")
+
             if self.should_run:
                 time.sleep(3)
                 self.connect()
@@ -206,14 +246,16 @@ def cleanup_all_connections():
 # =============================
 def connect_deriv_account(user_id, token):
     val = validate_deriv_token(token)
-    if not val["success"]:
-        raise Exception(val["error"])
+
+    if not val.get("success"):
+        return val
 
     enc = encrypt_token(token)
 
+    # ⚠️ make sure your DB uses "api_token"
     db.save_deriv_token(
         user_id=user_id,
-        encrypted_token=enc,
+        api_token=enc,
         account_id=val["account_id"],
         currency=val["currency"],
         balance=val["balance"]
