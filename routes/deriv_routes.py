@@ -7,7 +7,8 @@ from services.deriv_service import (
     get_deriv_account_status,
     get_deriv_balance,
     validate_deriv_token,
-    get_account_info
+    get_account_info,
+    get_connection_status
 )
 
 deriv_bp = Blueprint('deriv', __name__)
@@ -19,7 +20,6 @@ deriv_bp = Blueprint('deriv', __name__)
 @deriv_bp.route('/connect', methods=['POST'])
 @jwt_required()
 def connect():
-    """Connect Deriv account using API token"""
     try:
         user_id = get_jwt_identity()
         data = request.get_json()
@@ -43,7 +43,6 @@ def connect():
 @deriv_bp.route('/disconnect', methods=['POST'])
 @jwt_required()
 def disconnect():
-    """Disconnect Deriv account"""
     try:
         user_id = get_jwt_identity()
         result = disconnect_deriv_account(user_id)
@@ -58,7 +57,6 @@ def disconnect():
 @deriv_bp.route('/status', methods=['GET'])
 @jwt_required()
 def status():
-    """Get Deriv account status"""
     try:
         user_id = get_jwt_identity()
         result = get_deriv_account_status(user_id)
@@ -73,7 +71,6 @@ def status():
 @deriv_bp.route('/balance', methods=['GET'])
 @jwt_required()
 def balance():
-    """Get Deriv account balance"""
     try:
         user_id = get_jwt_identity()
         result = get_deriv_balance(user_id)
@@ -88,7 +85,6 @@ def balance():
 @deriv_bp.route('/account', methods=['GET'])
 @jwt_required()
 def account():
-    """Get Deriv account info"""
     try:
         user_id = get_jwt_identity()
         result = get_account_info(user_id)
@@ -102,7 +98,6 @@ def account():
 
 @deriv_bp.route('/test-token', methods=['POST'])
 def test_token():
-    """Test Deriv API token without connecting"""
     try:
         data = request.get_json()
         api_token = data.get('api_token')
@@ -115,6 +110,23 @@ def test_token():
         
         result = validate_deriv_token(api_token)
         return jsonify(result), 200
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@deriv_bp.route('/connection-status', methods=['GET'])
+@jwt_required()
+def connection_status():
+    try:
+        user_id = get_jwt_identity()
+        result = get_connection_status(user_id)
+        return jsonify({
+            'success': True,
+            'data': result
+        }), 200
         
     except Exception as e:
         return jsonify({

@@ -82,7 +82,6 @@ def request_otp(api_token, account_id):
         
         data = response.json()
         
-        # Extract WebSocket URL from response
         ws_url = data.get('data', {}).get('ws_url')
         if not ws_url:
             logger.error(f"No WebSocket URL in OTP response: {data}")
@@ -100,7 +99,7 @@ def request_otp(api_token, account_id):
 class DerivConnection:
     def __init__(self, user_id, api_token, config, socketio=None):
         self.user_id = user_id
-        self.api_token = api_token  # PAT token
+        self.api_token = api_token
         self.config = config
         self.socketio = socketio
         
@@ -115,7 +114,6 @@ class DerivConnection:
         self.accounts = []
         self.connected_at = None
         
-        # Subscriptions
         self.subscriptions = {}
         self._pending_requests = {}
         self._request_counter = 0
@@ -127,14 +125,12 @@ class DerivConnection:
         self._heartbeat_thread = None
     
     def connect(self):
-        """Establish WebSocket connection using PAT + OTP flow"""
         with self._state_lock:
             if self.connected or self.connecting:
                 return
             self.connecting = True
             self.should_run = True
         
-        # Step 1: Get accounts
         logger.info(f"🔍 Getting accounts for user {self.user_id}")
         accounts = get_deriv_accounts(self.api_token)
         
@@ -146,7 +142,6 @@ class DerivConnection:
         
         self.accounts = accounts
         
-        # Find first active account
         active_account = None
         for acc in accounts:
             if acc.get('status') == 'active':
@@ -165,7 +160,6 @@ class DerivConnection:
         
         logger.info(f"✅ Found account: {self.account_id} ({self.currency}) balance: {self.balance}")
         
-        # Step 2: Request OTP
         logger.info(f"🔑 Requesting OTP for {self.account_id}")
         ws_url = request_otp(self.api_token, self.account_id)
         
@@ -175,9 +169,8 @@ class DerivConnection:
                 self.connecting = False
             return
         
-        logger.info(f"✅ OTP received: {ws_url}")
+        logger.info(f"✅ OTP received")
         
-        # Step 3: Connect WebSocket
         def on_message(ws, message):
             try:
                 data = json.loads(message)
@@ -212,13 +205,8 @@ class DerivConnection:
                 self.connected_at = datetime.utcnow()
             
             logger.info(f"✅ WebSocket connected for user {self.user_id}")
-            
-            # Start heartbeat
             self._start_heartbeat()
-            
-            # Subscribe to balance updates
             self._subscribe_balance()
-            
             self.event.set()
         
         self.event.clear()
@@ -234,7 +222,6 @@ class DerivConnection:
         self.thread = threading.Thread(target=self._run_forever, daemon=True)
         self.thread.start()
         
-        # Wait for connection
         if not self.event.wait(10):
             logger.error(f"❌ Connection timeout for user {self.user_id}")
             with self._state_lock:
@@ -251,25 +238,20 @@ class DerivConnection:
                 time.sleep(1)
     
     def _route_message(self, data):
-        """Route incoming message"""
-        # Check for request/response
         req_id = data.get('req_id')
         if req_id and req_id in self._pending_requests:
             self._pending_requests[req_id]['response'] = data
             self._pending_requests[req_id]['event'].set()
             return
         
-        # Balance update
         if 'balance' in data:
             self._handle_balance(data)
             return
         
-        # Error
         if 'error' in data:
             self._handle_error(data)
             return
         
-        # Tick messages
         if data.get('msg_type') == 'tick':
             symbol = data.get('tick', {}).get('symbol')
             if symbol and symbol in self.subscriptions:
@@ -280,7 +262,6 @@ class DerivConnection:
             return
     
     def _handle_balance(self, data):
-        """Handle balance update"""
         balance_data = data.get('balance', {})
         self.balance = balance_data.get('balance', 0)
         
@@ -303,7 +284,6 @@ class DerivConnection:
             }, room=f'user_{self.user_id}')
     
     def _subscribe_balance(self):
-        """Subscribe to balance updates"""
         if not self._is_ws_ready():
             return
         
@@ -503,33 +483,61 @@ class DerivConnectionManager:
 connection_manager = DerivConnectionManager()
 
 # ============================================
-# EXPORT FUNCTIONS
+# EXPORTED FUNCTIONS
 # ============================================
-def connect_deriv_account(user_id, api_token):
-    """Connect Deriv account using PAT token"""
+
+def validate_deriv_token(api_token):
+    """Validate Deriv PAT token by getting accounts"""
     try:
-        # Test token by getting accounts
         accounts = get_deriv_accounts(api_token)
         
         if not accounts:
-            raise Exception("Invalid API token or no accounts found")
+            return {
+                'success': False,
+                'error': 'Invalid API token or no accounts found'
+            }
         
-        # Encrypt token
+        active_account = None
+        for acc in accounts:
+            if acc.get('status') == 'active':
+                active_account = acc
+                break
+        
+        return {
+            'success': True,
+            'account_id': active_account.get('account_id') if active_account else None,
+            'currency': active_account.get('currency', 'USD') if active_account else 'USD',
+            'balance': float(active_account.get('balance', 0)) if active_account else 0,
+            'accounts': accounts
+        }
+        
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+def connect_deriv_account(user_id, api_token):
+    try:
+        # Validate token
+        validation = validate_deriv_token(api_token)
+        
+        if not validation.get('success'):
+            raise Exception(validation.get('error', 'Invalid API token'))
+        
         encrypted_token = encrypt_token(api_token)
         
-        # Save to database
         success = db.save_deriv_token(
             user_id=user_id,
             encrypted_token=encrypted_token,
-            account_id=accounts[0].get('account_id') if accounts else None,
-            currency=accounts[0].get('currency', 'USD') if accounts else 'USD',
-            balance=float(accounts[0].get('balance', 0)) if accounts else 0
+            account_id=validation.get('account_id'),
+            currency=validation.get('currency', 'USD'),
+            balance=validation.get('balance', 0)
         )
         
         if not success:
             raise Exception("Failed to save token")
         
-        # Create connection
         from flask import current_app
         connection_manager.remove_connection(user_id)
         conn = connection_manager.get_connection(user_id, current_app.config)
@@ -636,6 +644,39 @@ def get_account_info(user_id):
         logger.error(f"Account info error: {e}")
         raise e
 
+def is_deriv_connected(user_id):
+    try:
+        account = db.get_deriv_token(user_id)
+        if not account:
+            return False
+        
+        conn = connection_manager.get_connection(user_id)
+        return conn is not None and conn.is_connected()
+        
+    except:
+        return False
+
+def get_connection_status(user_id):
+    return connection_manager.get_connection_status(user_id)
+
+def subscribe_to_symbol(user_id, symbol, callback):
+    from flask import current_app
+    conn = connection_manager.get_connection(user_id, current_app.config)
+    
+    if not conn or not conn.is_connected():
+        raise Exception('Deriv connection not available')
+    
+    return conn.subscribe(symbol, callback)
+
+def unsubscribe_from_symbol(user_id, symbol):
+    from flask import current_app
+    conn = connection_manager.get_connection(user_id, current_app.config)
+    
+    if not conn or not conn.is_connected():
+        return True
+    
+    return conn.unsubscribe(symbol)
+
 def init_socketio(socketio):
     connection_manager.init_socketio(socketio)
     return socketio
@@ -643,5 +684,7 @@ def init_socketio(socketio):
 def cleanup_all_connections():
     connection_manager.cleanup_all()
 
-# Export
+# ============================================
+# ✅ Export all functions
+# ============================================
 deriv_service = connection_manager
