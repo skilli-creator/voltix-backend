@@ -11,7 +11,7 @@ from models.database import db
 
 logger = logging.getLogger(__name__)
 
-DERIV_API_URL = "https://api.derivws.com"
+DERIV_API_URL = "https://api.deriv.com"
 
 
 # =============================
