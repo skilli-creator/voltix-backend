@@ -38,85 +38,71 @@ def decrypt_token(encrypted_token):
     return fernet.decrypt(encrypted_token.encode()).decode()
 
 # ============================================
-# DERIV API - CORRECT ENDPOINTS
+# DERIV API - PAT + OTP FLOW
 # ============================================
 
-# ✅ CORRECT: REST API base URL
-DERIV_API_URL = "https://api.deriv.com"
-
-# ✅ CORRECT: WebSocket base URL (without app_id for OTP flow)
+# ✅ CORRECT: REST API base URL (matches working tool)
+DERIV_API_URL = "https://api.derivws.com"
 DERIV_WS_URL = "wss://ws.derivws.com/websockets/v3"
 
 def get_deriv_accounts(api_token):
-    """Get all accounts for a Deriv PAT token"""
+    """Step 3: Get all accounts for a Deriv PAT token"""
     try:
-        url = f"{DERIV_API_URL}/v3/accounts"
+        url = f"{DERIV_API_URL}/trading/v1/options/accounts"
         headers = {
             "Authorization": f"Bearer {api_token}",
             "Content-Type": "application/json"
         }
         
+        logger.info(f"📡 GET /accounts with PAT token")
         response = requests.get(url, headers=headers, timeout=10)
         
         if response.status_code != 200:
-            logger.error(f"Failed to get accounts: {response.status_code} - {response.text}")
+            logger.error(f"❌ Failed to get accounts: {response.status_code}")
             return None
         
         data = response.json()
-        return data.get('accounts', [])
+        accounts = data.get('data', [])
+        logger.info(f"✅ Found {len(accounts)} account(s)")
+        
+        # Log account details
+        for acc in accounts:
+            logger.info(f"   - {acc.get('account_id')} ({acc.get('currency')}) balance: {acc.get('balance')} [{acc.get('status')}]")
+        
+        return accounts
         
     except Exception as e:
-        logger.error(f"Error getting accounts: {e}")
+        logger.error(f"❌ Error getting accounts: {e}")
         return None
 
 def request_otp(api_token, account_id):
-    """Request OTP for a specific account"""
+    """Step 5: Request OTP for WebSocket session"""
     try:
-        url = f"{DERIV_API_URL}/v3/accounts/{account_id}/otp"
+        url = f"{DERIV_API_URL}/trading/v1/options/accounts/{account_id}/otp"
         headers = {
             "Authorization": f"Bearer {api_token}",
             "Content-Type": "application/json"
         }
         
+        logger.info(f"🔑 Requesting OTP for {account_id}")
         response = requests.get(url, headers=headers, timeout=10)
         
         if response.status_code != 200:
-            logger.error(f"Failed to get OTP: {response.status_code} - {response.text}")
+            logger.error(f"❌ Failed to get OTP: {response.status_code}")
             return None
         
         data = response.json()
+        ws_url = data.get('data', {}).get('ws_url')
         
-        ws_url = data.get('ws_url')
         if not ws_url:
-            logger.error(f"No WebSocket URL in OTP response: {data}")
+            logger.error(f"❌ No WebSocket URL in OTP response")
             return None
         
+        logger.info(f"✅ OTP received, WebSocket URL ready")
         return ws_url
         
     except Exception as e:
-        logger.error(f"Error requesting OTP: {e}")
-        return None
-
-def get_deriv_balance_rest(api_token, account_id):
-    """Get balance via REST API (fallback)"""
-    try:
-        url = f"{DERIV_API_URL}/v3/accounts/{account_id}/balance"
-        headers = {
-            "Authorization": f"Bearer {api_token}",
-            "Content-Type": "application/json"
-        }
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        
-        if response.status_code != 200:
-            logger.error(f"Failed to get balance: {response.status_code} - {response.text}")
-            return None
-        
-        data = response.json()
-        return data.get('balance', 0)
-        
-    except Exception as e:
-        logger.error(f"Error getting balance: {e}")
+        logger.error(f"❌ Error requesting OTP: {e}")
         return None
 
 # ============================================
@@ -126,18 +112,15 @@ def get_deriv_balance_rest(api_token, account_id):
 def validate_deriv_token(api_token):
     """Validate Deriv PAT token by getting accounts"""
     try:
-        logger.info(f"🔍 Validating token...")
+        logger.info(f"🔍 Validating PAT token...")
         
         accounts = get_deriv_accounts(api_token)
         
         if not accounts:
-            logger.error(f"❌ No accounts found for token")
             return {
                 'success': False,
                 'error': 'Invalid API token or no accounts found'
             }
-        
-        logger.info(f"✅ Found {len(accounts)} accounts")
         
         # Find active account
         active_account = None
@@ -147,8 +130,9 @@ def validate_deriv_token(api_token):
                 break
         
         if not active_account:
-            logger.warning(f"⚠️ No active account found, using first account")
             active_account = accounts[0]
+        
+        logger.info(f"✅ Active account: {active_account.get('account_id')}")
         
         return {
             'success': True,
@@ -166,7 +150,7 @@ def validate_deriv_token(api_token):
         }
 
 # ============================================
-# DERIV CONNECTION - Clean PAT + OTP Flow
+# DERIV CONNECTION - PAT + OTP FLOW
 # ============================================
 class DerivConnection:
     def __init__(self, user_id, api_token, config, socketio=None):
@@ -175,11 +159,14 @@ class DerivConnection:
         self.config = config
         self.socketio = socketio
         
+        # WebSocket state
         self.ws = None
         self.connected = False
         self.connecting = False
         self.should_run = False
         self._state_lock = threading.Lock()
+        
+        # Account info
         self.account_id = None
         self.currency = 'USD'
         self.balance = 0
@@ -187,16 +174,21 @@ class DerivConnection:
         self.connected_at = None
         self.last_message = None
         
-        self.subscriptions = {}  # symbol -> callback
+        # Callback system (req_id based)
         self._pending_requests = {}
         self._request_counter = 0
         self._request_lock = threading.Lock()
+        
+        # Event system
         self.event = threading.Event()
         self.thread = None
+        
+        # Reconnection
         self._reconnect_count = 0
         self._max_reconnects = 10
+        
+        # Heartbeat
         self._heartbeat_thread = None
-        self._authorized = False
         
         # Cleanup timer for stale requests
         self._cleanup_timer = None
@@ -221,26 +213,26 @@ class DerivConnection:
         self._cleanup_timer.start()
     
     def connect(self):
-        """Establish WebSocket connection using PAT + OTP flow"""
+        """Step 6: Establish WebSocket connection using PAT + OTP flow"""
         with self._state_lock:
             if self.connected or self.connecting:
                 return
             self.connecting = True
             self.should_run = True
         
-        # Step 1: Get accounts
-        logger.info(f"🔍 Getting accounts for user {self.user_id}")
+        # Step 3: Get accounts
+        logger.info(f"📡 Getting accounts for user {self.user_id}")
         accounts = get_deriv_accounts(self.api_token)
         
         if not accounts:
-            logger.error(f"❌ No accounts found for user {self.user_id}")
+            logger.error(f"❌ No accounts found")
             with self._state_lock:
                 self.connecting = False
             return
         
         self.accounts = accounts
         
-        # Find first active account
+        # Step 4: Select active account
         active_account = None
         for acc in accounts:
             if acc.get('status') == 'active':
@@ -248,54 +240,51 @@ class DerivConnection:
                 break
         
         if not active_account:
-            logger.error(f"❌ No active account found for user {self.user_id}")
-            with self._state_lock:
-                self.connecting = False
-            return
+            active_account = accounts[0]
         
         self.account_id = active_account.get('account_id')
         self.currency = active_account.get('currency', 'USD')
         self.balance = float(active_account.get('balance', 0))
         
-        logger.info(f"✅ Found account: {self.account_id} ({self.currency}) balance: {self.balance}")
+        logger.info(f"✅ Selected account: {self.account_id} ({self.currency}) balance: {self.balance}")
         
-        # Step 2: Request OTP
+        # Step 5: Request OTP
         logger.info(f"🔑 Requesting OTP for {self.account_id}")
         ws_url = request_otp(self.api_token, self.account_id)
         
         if not ws_url:
-            logger.error(f"❌ Failed to get OTP for user {self.user_id}")
+            logger.error(f"❌ Failed to get OTP")
             with self._state_lock:
                 self.connecting = False
             return
         
-        logger.info(f"✅ OTP received")
+        logger.info(f"✅ OTP received, connecting WebSocket...")
         
-        # Step 3: Connect WebSocket
+        # Step 6: WebSocket connection
         def on_message(ws, message):
             try:
                 data = json.loads(message)
                 self.last_message = datetime.utcnow()
                 self._route_message(data)
             except Exception as e:
-                logger.error(f"WebSocket message error for user {self.user_id}: {e}")
+                logger.error(f"WebSocket message error: {e}")
         
         def on_error(ws, error):
-            logger.error(f"WebSocket error for user {self.user_id}: {error}")
+            logger.error(f"WebSocket error: {error}")
             with self._state_lock:
                 self.connected = False
         
         def on_close(ws, close_status_code, close_msg):
-            logger.warning(f"WebSocket closed for user {self.user_id}: {close_msg}")
+            logger.warning(f"WebSocket closed: {close_msg}")
             with self._state_lock:
                 self.connected = False
                 self.connecting = False
-                self._authorized = False
             
+            # Auto-reconnect
             if self.should_run and self._reconnect_count < self._max_reconnects:
                 self._reconnect_count += 1
                 wait_time = min(2 ** self._reconnect_count, 30)
-                logger.info(f"🔄 Reconnecting user {self.user_id} in {wait_time}s (attempt {self._reconnect_count})")
+                logger.info(f"🔄 Reconnecting in {wait_time}s (attempt {self._reconnect_count})")
                 threading.Timer(wait_time, self.connect).start()
         
         def on_open(ws):
@@ -306,15 +295,11 @@ class DerivConnection:
                 self._reconnect_count = 0
                 self.connected_at = datetime.utcnow()
             
-            logger.info(f"✅ WebSocket connected for user {self.user_id}")
+            logger.info(f"✅ WebSocket connected")
+            logger.info(f"🔐 Sending authorization...")
             
-            # ✅ OTP URL is already authenticated - skip authorize if not needed
-            # But we can try if needed (Deriv may still expect it for some account types)
-            # We'll send it but expect it might be rejected gracefully
-            auth_payload = {
-                "authorize": self.api_token
-            }
-            logger.info(f"🔐 Sending authorization (may be optional with OTP)...")
+            # Send authorize
+            auth_payload = {"authorize": self.api_token}
             self.send(auth_payload)
             
             # Start heartbeat
@@ -335,9 +320,8 @@ class DerivConnection:
         self.thread = threading.Thread(target=self._run_forever, daemon=True)
         self.thread.start()
         
-        # Wait for connection
         if not self.event.wait(10):
-            logger.error(f"❌ Connection timeout for user {self.user_id}")
+            logger.error(f"❌ Connection timeout")
             with self._state_lock:
                 self.connecting = False
     
@@ -348,25 +332,24 @@ class DerivConnection:
                 if self.should_run:
                     time.sleep(1)
             except Exception as e:
-                logger.error(f"WebSocket run error for user {self.user_id}: {e}")
+                logger.error(f"WebSocket run error: {e}")
                 time.sleep(1)
     
     def _route_message(self, data):
-        """Route incoming message"""
+        """Route incoming message to appropriate handler"""
         msg_type = data.get('msg_type')
         
-        # Handle authorization response
+        # Step 6: Handle authorization response
         if msg_type == 'authorize':
             if 'error' in data:
                 error_msg = data['error'].get('message', 'Authorization failed')
-                # ✅ OTP connection may already be authenticated - don't treat as fatal
-                logger.warning(f"⚠️ Authorization response (may be expected): {error_msg}")
-                self._authorized = False
+                logger.warning(f"⚠️ Authorization response: {error_msg}")
             else:
-                logger.info(f"✅ Authorization successful for user {self.user_id}")
-                self._authorized = True
-                # Subscribe to balance after successful auth
+                logger.info(f"✅ Authorization successful")
+                # Step 7: Subscribe to balance after auth
                 self._subscribe_balance()
+                # Step 7: Subscribe to transaction stream
+                self._subscribe_transactions()
                 
                 if self.socketio:
                     self.socketio.emit('deriv_authorized', {
@@ -376,57 +359,43 @@ class DerivConnection:
                     }, room=f'user_{self.user_id}')
             return
         
-        # Check for request/response
+        # Step 10: Handle request/response callbacks
         req_id = data.get('req_id')
         if req_id and req_id in self._pending_requests:
+            logger.info(f"📨 Found callback for req_id: {req_id}")
             self._pending_requests[req_id]['response'] = data
             self._pending_requests[req_id]['event'].set()
             return
         
-        # Balance update
+        # Step 10: Handle balance updates
         if 'balance' in data:
             self._handle_balance(data)
             return
         
-        # Error
+        # Handle errors
         if 'error' in data:
             self._handle_error(data)
             return
-        
-        # Tick messages
-        if msg_type == 'tick':
-            symbol = data.get('tick', {}).get('symbol')
-            if symbol and symbol in self.subscriptions:
-                try:
-                    self.subscriptions[symbol](data)
-                except Exception as e:
-                    logger.error(f"Subscription handler error for {symbol}: {e}")
-            return
-        
-        # Generic message handlers
-        if msg_type and msg_type in self.message_handlers:
-            try:
-                self.message_handlers[msg_type](data)
-            except Exception as e:
-                logger.error(f"Message handler error for {msg_type}: {e}")
     
     def _handle_balance(self, data):
-        """Handle balance update"""
+        """Step 10: Handle balance update"""
         balance_data = data.get('balance', {})
-        self.balance = balance_data.get('balance', 0)
+        new_balance = balance_data.get('balance', 0)
         
-        logger.info(f"💰 Balance updated for {self.user_id}: {self.balance}")
-        
-        if self.socketio:
-            self.socketio.emit('deriv_balance_update', {
-                'balance': self.balance,
-                'currency': self.currency,
-                'account_id': self.account_id
-            }, room=f'user_{self.user_id}')
+        if new_balance != self.balance:
+            logger.info(f"💰 Balance updated: {self.balance} → {new_balance}")
+            self.balance = new_balance
+            
+            if self.socketio:
+                self.socketio.emit('deriv_balance_update', {
+                    'balance': self.balance,
+                    'currency': self.currency,
+                    'account_id': self.account_id
+                }, room=f'user_{self.user_id}')
     
     def _handle_error(self, data):
         error_msg = data.get('error', {}).get('message', 'Unknown error')
-        logger.warning(f"Deriv error for user {self.user_id}: {error_msg}")
+        logger.warning(f"Deriv error: {error_msg}")
         
         if self.socketio:
             self.socketio.emit('deriv_error', {
@@ -434,14 +403,25 @@ class DerivConnection:
             }, room=f'user_{self.user_id}')
     
     def _subscribe_balance(self):
-        """Subscribe to balance updates"""
+        """Step 7: Subscribe to balance updates"""
         if not self._is_ws_ready():
-            logger.warning(f"⚠️ Cannot subscribe to balance: not connected")
             return
         
         payload = {'balance': 1, 'subscribe': 1}
         self.send(payload)
-        logger.info(f"📊 Subscribed to balance updates for {self.user_id}")
+        logger.info(f"📊 Subscribed to balance updates")
+    
+    def _subscribe_transactions(self):
+        """Step 7: Subscribe to transaction stream for instant settlement"""
+        if not self._is_ws_ready():
+            return
+        
+        payload = {
+            'transaction': 1,
+            'subscribe': 1
+        }
+        self.send(payload)
+        logger.info(f"📊 Subscribed to transaction stream")
     
     def send(self, payload):
         if not self._is_ws_ready():
@@ -451,7 +431,7 @@ class DerivConnection:
             self.ws.send(json.dumps(payload))
             return True
         except Exception as e:
-            logger.error(f"Send error for user {self.user_id}: {e}")
+            logger.error(f"Send error: {e}")
             with self._state_lock:
                 self.connected = False
             return False
@@ -461,6 +441,7 @@ class DerivConnection:
             return self.connected and self.ws is not None
     
     def send_request(self, payload, timeout=10):
+        """Step 10: Send request with callback"""
         with self._request_lock:
             self._request_counter += 1
             req_id = str(self._request_counter)
@@ -478,7 +459,10 @@ class DerivConnection:
                 return None
             
             if event.wait(timeout):
-                return self._pending_requests[req_id].get('response')
+                response = self._pending_requests[req_id].get('response')
+                if response:
+                    logger.info(f"✅ Request {req_id} completed")
+                return response
             return None
             
         finally:
@@ -486,6 +470,7 @@ class DerivConnection:
                 self._pending_requests.pop(req_id, None)
     
     def get_balance(self):
+        """Step 10: Get balance via request"""
         if not self._is_ws_ready():
             raise Exception("WebSocket not connected")
         
@@ -501,33 +486,6 @@ class DerivConnection:
     def is_connected(self):
         with self._state_lock:
             return self.connected and self.ws is not None
-    
-    def is_authorized(self):
-        return self._authorized
-    
-    def subscribe(self, symbol, callback):
-        with self._state_lock:
-            self.subscriptions[symbol] = callback
-        
-        if not self._is_ws_ready():
-            logger.warning(f"Cannot subscribe {symbol}: not connected")
-            return False
-        
-        payload = {'ticks': symbol, 'subscribe': 1}
-        return self.send(payload)
-    
-    # ✅ FIXED: Added unsubscribe method
-    def unsubscribe(self, symbol):
-        """Unsubscribe from a symbol"""
-        with self._state_lock:
-            if symbol in self.subscriptions:
-                del self.subscriptions[symbol]
-        
-        if not self._is_ws_ready():
-            return True
-        
-        payload = {'forget': symbol}
-        return self.send(payload)
     
     def _start_heartbeat(self):
         def ping():
@@ -548,7 +506,6 @@ class DerivConnection:
         with self._state_lock:
             self.connected = False
             self.connecting = False
-            self._authorized = False
         
         if self.ws:
             try:
@@ -556,14 +513,6 @@ class DerivConnection:
             except:
                 pass
             self.ws = None
-        
-        with self._state_lock:
-            self.subscriptions.clear()
-    
-    def reconnect(self):
-        self.disconnect()
-        time.sleep(0.5)
-        self.connect()
 
 # ============================================
 # CONNECTION MANAGER
@@ -605,23 +554,6 @@ class DerivConnectionManager:
             if user_id:
                 leave_room(f'user_{user_id}')
                 emit('left', {'room': f'user_{user_id}'})
-        
-        @socketio.on('deriv_subscribe')
-        def handle_subscribe(data):
-            user_id = data.get('user_id')
-            symbol = data.get('symbol')
-            if user_id and symbol:
-                conn = self.get_connection(user_id)
-                if conn and conn.is_connected():
-                    conn.subscribe(symbol, lambda data: self._emit_tick(user_id, symbol, data))
-                    emit('subscribed', {'symbol': symbol})
-    
-    def _emit_tick(self, user_id, symbol, data):
-        if self._socketio:
-            self._socketio.emit('deriv_tick', {
-                'symbol': symbol,
-                'data': data
-            }, room=f'user_{user_id}')
     
     def get_connection(self, user_id, config=None):
         with self._lock:
@@ -658,14 +590,6 @@ class DerivConnectionManager:
                 return True
             return False
     
-    def get_all_connections(self):
-        with self._lock:
-            return self._connections.copy()
-    
-    def get_active_user_ids(self):
-        with self._lock:
-            return [uid for uid, conn in self._connections.items() if conn.is_connected()]
-    
     def get_connection_status(self, user_id):
         with self._lock:
             if user_id not in self._connections:
@@ -674,13 +598,11 @@ class DerivConnectionManager:
             conn = self._connections[user_id]
             return {
                 'connected': conn.is_connected(),
-                'authorized': conn.is_authorized(),
                 'account_id': conn.account_id,
                 'currency': conn.currency,
                 'balance': conn.balance,
                 'accounts': conn.accounts,
-                'connected_at': conn.connected_at,
-                'subscriptions': list(conn.subscriptions.keys())
+                'connected_at': conn.connected_at
             }
     
     def emit_to_user(self, user_id, event, data):
@@ -694,17 +616,18 @@ class DerivConnectionManager:
         logger.info("✅ All connections cleaned up")
 
 # ============================================
-# GLOBAL CONNECTION MANAGER INSTANCE
+# GLOBAL INSTANCE
 # ============================================
 connection_manager = DerivConnectionManager()
 
 # ============================================
-# ACCOUNT MANAGEMENT FUNCTIONS
+# EXPORTED FUNCTIONS
 # ============================================
 
 def connect_deriv_account(user_id, api_token):
+    """Complete PAT + OTP connection flow"""
     try:
-        # Validate token
+        # Step 3: Validate token and get accounts
         validation = validate_deriv_token(api_token)
         
         if not validation.get('success'):
@@ -724,7 +647,7 @@ def connect_deriv_account(user_id, api_token):
         if not success:
             raise Exception("Failed to save token")
         
-        # Create connection
+        # Step 6: Create WebSocket connection
         from flask import current_app
         connection_manager.remove_connection(user_id)
         conn = connection_manager.get_connection(user_id, current_app.config)
@@ -756,7 +679,7 @@ def connect_deriv_account(user_id, api_token):
         }
         
     except Exception as e:
-        logger.error(f"Connect error for user {user_id}: {e}")
+        logger.error(f"Connect error: {e}")
         raise e
 
 def disconnect_deriv_account(user_id):
@@ -775,7 +698,7 @@ def disconnect_deriv_account(user_id):
         }
         
     except Exception as e:
-        logger.error(f"Disconnect error for user {user_id}: {e}")
+        logger.error(f"Disconnect error: {e}")
         raise e
 
 def get_deriv_account_status(user_id):
@@ -788,7 +711,6 @@ def get_deriv_account_status(user_id):
         conn = connection_manager.get_connection(user_id)
         if conn and conn.is_connected():
             status['isConnected'] = True
-            status['isAuthorized'] = conn.is_authorized()
         
         return {'success': True, 'data': status}
         
@@ -826,7 +748,6 @@ def get_account_info(user_id):
         conn = connection_manager.get_connection(user_id)
         if conn and conn.is_connected():
             account['isConnected'] = True
-            account['isAuthorized'] = conn.is_authorized()
         
         return {'success': True, 'data': account}
         
@@ -848,25 +769,6 @@ def is_deriv_connected(user_id):
 
 def get_connection_status(user_id):
     return connection_manager.get_connection_status(user_id)
-
-def subscribe_to_symbol(user_id, symbol, callback):
-    from flask import current_app
-    conn = connection_manager.get_connection(user_id, current_app.config)
-    
-    if not conn or not conn.is_connected():
-        raise Exception('Deriv connection not available')
-    
-    return conn.subscribe(symbol, callback)
-
-# ✅ FIXED: unsubscribe now uses the class method
-def unsubscribe_from_symbol(user_id, symbol):
-    from flask import current_app
-    conn = connection_manager.get_connection(user_id, current_app.config)
-    
-    if not conn or not conn.is_connected():
-        return True
-    
-    return conn.unsubscribe(symbol)
 
 def init_socketio(socketio):
     connection_manager.init_socketio(socketio)
