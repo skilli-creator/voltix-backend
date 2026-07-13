@@ -20,7 +20,12 @@ def connect():
     if not token:
         return jsonify({"success": False, "error": "Token required"}), 400
 
-    return jsonify(connect_deriv_account(user_id, token))
+    result = connect_deriv_account(user_id, token)
+
+    if not result["success"]:
+        return jsonify(result), 400
+
+    return jsonify(result)
 
 
 @deriv_bp.route("/disconnect", methods=["POST"])
@@ -41,7 +46,10 @@ def balance():
 @jwt_required()
 def status():
     user_id = get_jwt_identity()
-    return jsonify({"success": True, "data": get_connection_status(user_id)})
+    return jsonify({
+        "success": True,
+        "data": get_connection_status(user_id)
+    })
 
 
 @deriv_bp.route("/test-token", methods=["POST"])

@@ -7,14 +7,10 @@ import requests
 from cryptography.fernet import Fernet
 from flask_socketio import join_room
 from models.database import db
-import urllib3
-
-urllib3.disable_warnings()
 
 logger = logging.getLogger(__name__)
 
-DERIV_API = "https://165.227.79.199"
-DERIV_HOST = "api.deriv.com"
+DERIV_API = "https://api.deriv.com"
 
 
 # =============================
@@ -35,41 +31,34 @@ def decrypt_token(token):
 
 
 # =============================
-# REST
+# REST (CLEAN + SAFE)
 # =============================
 def get_deriv_accounts(token):
     try:
-        url = f"{DERIV_API}/trading/v1/options/accounts"
-
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Host": DERIV_HOST
-        }
-
-        r = requests.get(url, headers=headers, timeout=10, verify=False)
+        r = requests.get(
+            f"{DERIV_API}/trading/v1/options/accounts",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
 
         if r.status_code != 200:
             logger.error(f"Deriv error: {r.text}")
             return None
 
-        data = r.json()
-        return data.get("data", [])
+        return r.json().get("data", [])
 
     except Exception as e:
-        logger.error(f"get_deriv_accounts error: {e}")
+        logger.error(f"get_deriv_accounts error: {str(e)}")
         return None
 
 
 def request_otp(token, account_id):
     try:
-        url = f"{DERIV_API}/trading/v1/options/accounts/{account_id}/otp"
-
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Host": DERIV_HOST
-        }
-
-        r = requests.get(url, headers=headers, timeout=10, verify=False)
+        r = requests.get(
+            f"{DERIV_API}/trading/v1/options/accounts/{account_id}/otp",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10
+        )
 
         if r.status_code != 200:
             logger.error(f"OTP error: {r.text}")
@@ -78,7 +67,7 @@ def request_otp(token, account_id):
         return r.json().get("data", {}).get("ws_url")
 
     except Exception as e:
-        logger.error(f"request_otp error: {e}")
+        logger.error(f"request_otp error: {str(e)}")
         return None
 
 
@@ -86,15 +75,15 @@ def validate_deriv_token(token):
     accounts = get_deriv_accounts(token)
 
     if not accounts:
-        return {"success": False, "error": "Invalid token"}
+        return {"success": False, "error": "Invalid token or network error"}
 
-    active = next((a for a in accounts if a.get("status") == "active"), accounts[0])
+    acc = next((a for a in accounts if a.get("status") == "active"), accounts[0])
 
     return {
         "success": True,
-        "account_id": active["account_id"],
-        "currency": active["currency"],
-        "balance": float(active["balance"]),
+        "account_id": acc["account_id"],
+        "currency": acc["currency"],
+        "balance": float(acc["balance"]),
         "accounts": accounts
     }
 
@@ -242,7 +231,7 @@ def connect_deriv_account(user_id, token):
 
     db.save_deriv_token(
         user_id=user_id,
-        api_token=encrypted,
+        encrypted_token=encrypted,
         account_id=validation["account_id"],
         currency=validation["currency"],
         balance=validation["balance"]
