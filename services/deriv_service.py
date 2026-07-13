@@ -4,13 +4,19 @@ import threading
 import time
 import logging
 import requests
+import urllib3
 from cryptography.fernet import Fernet
 from flask_socketio import join_room
 from models.database import db
 
+# Disable SSL warnings (needed for IP HTTPS fallback)
+urllib3.disable_warnings()
+
 logger = logging.getLogger(__name__)
 
-DERIV_API = "https://api.deriv.com"
+# 🔥 DNS fallback (fixes Render DNS issue)
+DERIV_API = "https://165.227.79.199"
+DERIV_HOST = "api.deriv.com"
 
 
 # =============================
@@ -31,14 +37,20 @@ def decrypt_token(token):
 
 
 # =============================
-# REST (CLEAN + SAFE)
+# REST (DNS FIXED VERSION)
 # =============================
 def get_deriv_accounts(token):
     try:
+        url = f"{DERIV_API}/trading/v1/options/accounts"
+
         r = requests.get(
-            f"{DERIV_API}/trading/v1/options/accounts",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Host": DERIV_HOST
+            },
+            timeout=10,
+            verify=False
         )
 
         if r.status_code != 200:
@@ -54,10 +66,16 @@ def get_deriv_accounts(token):
 
 def request_otp(token, account_id):
     try:
+        url = f"{DERIV_API}/trading/v1/options/accounts/{account_id}/otp"
+
         r = requests.get(
-            f"{DERIV_API}/trading/v1/options/accounts/{account_id}/otp",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=10
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Host": DERIV_HOST
+            },
+            timeout=10,
+            verify=False
         )
 
         if r.status_code != 200:
